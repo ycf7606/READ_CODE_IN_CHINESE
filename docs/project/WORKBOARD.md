@@ -12,9 +12,9 @@ Every future work session must read these files in order before making changes:
 ## Current Status
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
-- Active stage: Stage 7
-- Latest completed milestone: Stage 6
-- Latest summary: `docs/project/summaries/2026-04-13-stage-6.md`
+- Active stage: Complete
+- Latest completed milestone: Stage 7
+- Latest summary: `docs/project/summaries/2026-04-13-stage-7.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -31,7 +31,7 @@ Every future work session must read these files in order before making changes:
 | 4 | Multi-granularity explanation | Completed | Selection, file, and workspace views |
 | 5 | Follow-up chat | Completed | Webview panel and follow-up conversation |
 | 6 | Knowledge augmentation | Completed | Local knowledge import and retrieval attachment |
-| 7 | Open-source polish | In Progress | Docs, tests, and release readiness |
+| 7 | Open-source polish | Completed | Docs, tests, CI, and packaging polish |
 
 ## Completed Tasks
 
@@ -67,13 +67,14 @@ Every future work session must read these files in order before making changes:
 - [x] S6-02 Attach retrieved knowledge snippets to explanation requests.
 - [x] S6-03 Support remote prompt construction for OpenAI-compatible providers.
 - [x] S6-04 Produce the Stage 6 summary file.
+- [x] S7-01 Add automated tests for core pure modules.
+- [x] S7-02 Add CI workflow and packaging ignore rules.
+- [x] S7-03 Expand README and supporting repository documentation.
+- [x] S7-04 Produce the Stage 7 summary file.
 
 ## Current Todo
 
-- [ ] S7-01 Add automated tests for core pure modules.
-- [ ] S7-02 Add CI workflow and packaging ignore rules.
-- [ ] S7-03 Expand README and supporting repository documentation.
-- [ ] S7-04 Produce the Stage 7 summary file.
+- [ ] No open implementation tasks in the current delivery scope.
 
 ## Open Decisions Locked for Now
 
@@ -85,6 +86,6 @@ Every future work session must read these files in order before making changes:
 
 ## Notes
 
-- The core extension workflow is now implemented end-to-end.
+- The core extension workflow is implemented end-to-end and validated by compile plus unit tests.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.

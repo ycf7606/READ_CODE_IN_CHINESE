@@ -151,3 +151,22 @@
   - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\prompts\openAICompatiblePrompt.ts`
   - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
 - Verification: `npm.cmd run compile`
+
+### S7-01 Add tests, CI, and repository docs
+
+- Stage: 7
+- Result: Added unit tests, CI workflow, packaging ignore rules, and repository-level docs for development, contribution, security, architecture, and knowledge import.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\test\index.test.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\.github\workflows\ci.yml`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\.vscodeignore`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CONTRIBUTING.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\SECURITY.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\knowledge\IMPORTING_KNOWLEDGE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\knowledge\knowledge-sample.json`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`

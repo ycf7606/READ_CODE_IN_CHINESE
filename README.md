@@ -24,8 +24,8 @@
 
 - Stage 0 completed
 - Stage 1 completed
-- Stage 2-6 implementation is now present in the extension codebase
-- Stage 7 open-source polish is included through docs, tests, and CI
+- Stage 2-6 implementation is present in the extension codebase
+- Stage 7 open-source polish is complete through docs, tests, and CI
 - Tracking board: `docs/project/WORKBOARD.md`
 
 ## Main Commands
