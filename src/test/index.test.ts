@@ -1,12 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { promises as fs } from "fs";
+import * as os from "os";
+import * as path from "path";
 import { extractGlossaryEntries } from "../analysis/glossary";
 import {
   buildFileOverviewSummary,
   createWorkspaceFileSummary,
   inferGranularity
 } from "../analysis/summary";
+import { getOfficialDocsPreset } from "../knowledge/officialDocs";
+import { KnowledgeStore } from "../knowledge/knowledgeStore";
 import { LocalExplanationProvider } from "../providers/localProvider";
+import { WorkspaceStore } from "../storage/workspaceStore";
 import { ExplanationRequest } from "../contracts";
 
 test("extractGlossaryEntries finds key symbols", () => {
@@ -55,6 +61,7 @@ test("local provider returns structured explanation output", async () => {
     professionalLevel: "intermediate",
     sections: ["summary", "inputOutput", "usage"],
     userGoal: "Understand the function quickly",
+    customInstructions: "",
     contextBefore: "",
     contextAfter: "",
     glossaryEntries: extractGlossaryEntries(
@@ -67,7 +74,7 @@ test("local provider returns structured explanation output", async () => {
 
   assert.equal(response.requestId, "test");
   assert.equal(response.granularity, "function");
-  assert.ok(response.summary.includes("function-like selection"));
+  assert.ok(response.summary.includes("函数形态"));
   assert.ok(response.sections.length >= 3);
 });
 
@@ -78,4 +85,47 @@ test("file overview mentions the target file", () => {
   );
 
   assert.ok(summary.includes("src/state.ts"));
+});
+
+test("official docs preset exists for typescript", () => {
+  const preset = getOfficialDocsPreset("typescript");
+
+  assert.ok(preset);
+  assert.equal(preset?.label, "TypeScript");
+  assert.ok((preset?.documents.length ?? 0) >= 2);
+});
+
+test("knowledge search prefers title matches", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-knowledge-search-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const knowledgeStore = new KnowledgeStore(store);
+
+  await knowledgeStore.upsertDocuments([
+    {
+      id: "doc-1",
+      title: "Promise handling",
+      sourcePath: "doc-1",
+      importedAt: new Date().toISOString(),
+      tags: ["javascript"],
+      content: "Promise chains and async flow.",
+      sourceType: "imported"
+    },
+    {
+      id: "doc-2",
+      title: "Misc notes",
+      sourcePath: "doc-2",
+      importedAt: new Date().toISOString(),
+      tags: ["javascript", "promise"],
+      content: "This note briefly mentions promise once.",
+      sourceType: "imported"
+    }
+  ]);
+
+  const results = await knowledgeStore.search("promise", 2);
+
+  assert.equal(results[0]?.documentId, "doc-1");
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
 });

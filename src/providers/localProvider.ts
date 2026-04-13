@@ -4,6 +4,7 @@ import {
   FollowUpRequest,
   FollowUpResponse
 } from "../contracts";
+import { ExtensionLogger } from "../logging/logger";
 import {
   buildLocalSummary,
   buildSectionContent,
@@ -14,6 +15,8 @@ import { ExplanationProvider } from "./providerTypes";
 export class LocalExplanationProvider implements ExplanationProvider {
   readonly id = "local";
 
+  constructor(private readonly logger?: ExtensionLogger) {}
+
   async explain(request: ExplanationRequest): Promise<ExplanationResponse> {
     const startedAt = Date.now();
     const summary = buildLocalSummary(request);
@@ -21,6 +24,12 @@ export class LocalExplanationProvider implements ExplanationProvider {
       label: sectionName,
       content: buildSectionContent(request, sectionName)
     }));
+
+    this.logger?.info("Local provider generated explanation", {
+      requestId: request.requestId,
+      granularity: request.granularity,
+      knowledgeSnippets: request.knowledgeSnippets.length
+    });
 
     return {
       requestId: request.requestId,
@@ -44,32 +53,36 @@ export class LocalExplanationProvider implements ExplanationProvider {
   async answerFollowUp(request: FollowUpRequest): Promise<FollowUpResponse> {
     const startedAt = Date.now();
     const relatedSection = request.explanation.sections.find((section) =>
-      request.question.includes(section.label)
+      request.question.toLowerCase().includes(section.label.toLowerCase())
     );
     const glossaryHints = request.explanation.glossaryHints
       .slice(0, 3)
       .map((entry) => `${entry.term}: ${entry.meaning}`)
-      .join(" ");
-
+      .join("；");
     const answerParts = [
-      `围绕这段代码，核心仍然是：${request.explanation.summary}`
+      `围绕这段代码，核心可以先抓住这点：${request.explanation.summary}`
     ];
 
     if (relatedSection) {
-      answerParts.push(`补充到 ${relatedSection.label} 这一点：${relatedSection.content}`);
+      answerParts.push(`如果进一步看 ${relatedSection.label}，重点是：${relatedSection.content}`);
     }
 
     if (glossaryHints) {
-      answerParts.push(`相关术语可以优先按这些含义理解：${glossaryHints}`);
+      answerParts.push(`相关术语可以优先这样理解：${glossaryHints}`);
     }
 
-    answerParts.push("如果你要继续追问，优先问输入输出、调用时机、或者副作用。");
+    answerParts.push("继续追问时，优先看输入输出、触发时机，以及是否有副作用。");
+
+    this.logger?.info("Local provider answered follow-up", {
+      questionLength: request.question.length,
+      requestId: request.request.requestId
+    });
 
     return {
       answer: answerParts.join(" "),
       suggestedQuestions: [
-        "这段逻辑依赖哪些上游变量？",
-        "如果我要改这里，最容易出错的点是什么？"
+        "它依赖了哪些上游变量或状态？",
+        "如果我要修改这里，最容易出错的点是什么？"
       ],
       source: this.id,
       latencyMs: Date.now() - startedAt

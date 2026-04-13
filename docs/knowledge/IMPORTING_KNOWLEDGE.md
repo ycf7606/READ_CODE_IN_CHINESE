@@ -27,11 +27,20 @@ You can import a JSON object or a JSON array. Each item should follow this shape
 - official syntax references that you prepared locally
 - project-specific architecture docs
 
+## Official Docs Sync
+
+You can also populate the same knowledge library with the built-in official docs sync command:
+
+- `Read Code In Chinese: Sync Official Docs For Active Language`
+
+This command downloads a preset bundle for the active language, chunks the result, and stores it in the same workspace knowledge library.
+
 ## Retrieval Behavior
 
 - retrieval is keyword-based
 - top matches are attached to explanation requests
 - the local heuristic provider and the remote provider can both use the imported snippets
+- title and tag matches are weighted more heavily than raw content matches
 
 ## Storage
 

@@ -23,6 +23,9 @@ export function getSettings(): ExtensionSettings {
       "READ_CODE_IN_CHINESE_API_KEY"
     ),
     providerTimeoutMs: configuration.get<number>("provider.timeoutMs", 20000),
+    providerTemperature: configuration.get<number>("provider.temperature", 0.2),
+    providerTopP: configuration.get<number>("provider.topP", 1),
+    providerMaxTokens: configuration.get<number>("provider.maxTokens", 1200),
     detailLevel: configuration.get<DetailLevel>(
       "explanation.detailLevel",
       "balanced"
@@ -36,6 +39,7 @@ export function getSettings(): ExtensionSettings {
       ["summary", "usage"]
     ),
     userGoal: configuration.get<string>("explanation.userGoal", ""),
-    knowledgeTopK: configuration.get<number>("knowledge.topK", 3)
+    knowledgeTopK: configuration.get<number>("knowledge.topK", 3),
+    customInstructions: configuration.get<string>("prompt.customInstructions", "")
   };
 }

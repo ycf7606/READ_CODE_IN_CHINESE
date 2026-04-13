@@ -25,7 +25,8 @@ export function buildExplainPrompts(request: ExplanationRequest): {
       "Use this exact shape:",
       '{"title":"string","summary":"string","sections":[{"label":"string","content":"string"}],"suggestedQuestions":["string"],"glossaryHints":[{"term":"string","meaning":"string","category":"variable"}],"note":"string"}',
       "Keep each sentence short and useful.",
-      "Do not include markdown fences."
+      "Do not include markdown fences.",
+      request.customInstructions
     ].join(" "),
     user: [
       `Goal: ${request.userGoal || "Help the user read source code quickly."}`,
@@ -66,7 +67,8 @@ export function buildFollowUpPrompts(request: FollowUpRequest): {
     system: [
       "You continue a code-reading conversation in concise Chinese.",
       "Answer directly.",
-      "Keep the explanation grounded in the prior explanation and user question."
+      "Keep the explanation grounded in the prior explanation and user question.",
+      request.request.customInstructions || ""
     ].join(" "),
     user: [
       `Current explanation title: ${request.explanation.title}`,

@@ -7,7 +7,9 @@ The extension is designed to make source code easier to read by combining:
 - local heuristics
 - workspace glossary caching
 - optional retrieval from imported knowledge
+- official docs sync for active languages
 - optional remote model calls
+- runtime logging that is visible in VS Code
 
 ## Main Modules
 
@@ -15,13 +17,15 @@ The extension is designed to make source code easier to read by combining:
 
 - registers commands
 - manages selection listeners
+- keeps the panel synced with the current editor selection
 - builds explanation requests
-- coordinates glossary refresh, workspace index generation, and follow-up chat
+- coordinates glossary refresh, workspace index generation, official docs sync, and follow-up chat
+- logs execution flow and provider fallbacks
 
 ### `src/analysis/`
 
 - `glossary.ts`: extracts symbols and generates stable term meanings
-- `summary.ts`: infers granularity and builds local summaries
+- `summary.ts`: infers granularity, builds local summaries, and suggests follow-up questions
 
 ### `src/providers/`
 
@@ -31,9 +35,12 @@ The extension is designed to make source code easier to read by combining:
 
 ### `src/knowledge/`
 
-- imports `.md`, `.txt`, and `.json` documents
-- stores them in workspace cache
-- returns top keyword matches for explanation requests
+- `knowledgeStore.ts`: imports `.md`, `.txt`, and `.json` documents, stores them in workspace cache, and retrieves top keyword matches
+- `officialDocs.ts`: downloads preset official/reference language documents and chunks them into the knowledge library
+
+### `src/logging/`
+
+- `logger.ts`: writes runtime diagnostics to the `Read Code In Chinese` output channel and mirrors them to the extension host console
 
 ### `src/storage/`
 
@@ -43,18 +50,20 @@ The extension is designed to make source code easier to read by combining:
 ### `src/ui/`
 
 - `glossaryTreeProvider.ts`: Explorer sidebar glossary
-- `explanationPanel.ts`: explanation, suggestions, workspace index preview, and chat
+- `explanationPanel.ts`: explanation, selection metadata, glossary snapshot, workspace preview, and follow-up chat
 
 ## Data Flow
 
 1. User selects code or runs a file/workspace command
-2. Extension loads settings and workspace services
-3. Glossary cache is loaded or regenerated
-4. Knowledge snippets are retrieved from imported documents
-5. Explanation request is built
-6. Local or remote provider returns a structured explanation
-7. Panel and glossary UI update
-8. User may ask a follow-up question in the same panel
+2. Extension loads settings, logger, and workspace services
+3. If the panel is open, selection changes automatically trigger explanation refresh
+4. Glossary cache is loaded or regenerated
+5. Knowledge snippets are retrieved from imported or synced documents
+6. Explanation request is built with user goal, custom prompt instructions, and provider hyperparameters
+7. Local or remote provider returns a structured explanation
+8. Panel, glossary UI, and status metadata update
+9. User may ask a follow-up question in the same panel
+10. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 
@@ -75,3 +84,5 @@ Workspace-local cache directory:
 - compact structured explanations
 - workspace-local persistence
 - minimal assumptions about the user's model provider
+- user-configurable prompt instructions and remote hyperparameters
+- VS Code-native, low-noise UI

@@ -17,8 +17,11 @@ import {
   GlossaryEntry,
   WorkspaceIndex
 } from "./contracts";
+import { syncOfficialDocsForLanguage } from "./knowledge/officialDocs";
 import { KnowledgeStore } from "./knowledge/knowledgeStore";
+import { ExtensionLogger } from "./logging/logger";
 import { createProvider } from "./providers/createProvider";
+import { ExplanationProvider } from "./providers/providerTypes";
 import { WorkspaceStore } from "./storage/workspaceStore";
 import { ExplanationPanel } from "./ui/explanationPanel";
 import { GlossaryTreeProvider } from "./ui/glossaryTreeProvider";
@@ -32,9 +35,16 @@ interface SessionState {
   glossaryEntries: GlossaryEntry[];
 }
 
+interface ExplainSelectionOptions {
+  showProgress: boolean;
+  showWarnings: boolean;
+  revealPanel: boolean;
+}
+
 const ACTIVE_GLOSSARY_VIEW = "readCodeInChinese.glossaryView";
 
 export function activate(context: vscode.ExtensionContext): void {
+  const logger = new ExtensionLogger();
   const glossaryTreeProvider = new GlossaryTreeProvider();
   const statusBarItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
@@ -48,22 +58,34 @@ export function activate(context: vscode.ExtensionContext): void {
   let lastAutoExplainSignature = "";
 
   const panel = new ExplanationPanel(async (message) => {
+    if (message.type === "ready") {
+      syncPanelContext(vscode.window.activeTextEditor);
+      return;
+    }
+
     if (message.type === "askQuestion") {
       await answerFollowUp(message.question);
     }
   });
 
   context.subscriptions.push(
+    logger,
     panel,
     statusBarItem,
     vscode.window.registerTreeDataProvider(ACTIVE_GLOSSARY_VIEW, glossaryTreeProvider)
   );
 
+  logger.info("Extension activated");
+
   const registeredCommands = [
     vscode.commands.registerCommand(
       "readCodeInChinese.explainSelection",
       async () => {
-        await explainSelection("manual");
+        await explainSelection("manual", {
+          showProgress: true,
+          showWarnings: true,
+          revealPanel: true
+        });
       }
     ),
     vscode.commands.registerCommand(
@@ -76,6 +98,15 @@ export function activate(context: vscode.ExtensionContext): void {
       "readCodeInChinese.openConversationPanel",
       async () => {
         panel.show();
+        syncPanelContext(vscode.window.activeTextEditor);
+
+        if (hasNonEmptySelection(vscode.window.activeTextEditor)) {
+          await explainSelection("auto", {
+            showProgress: false,
+            showWarnings: false,
+            revealPanel: false
+          });
+        }
       }
     ),
     vscode.commands.registerCommand(
@@ -107,6 +138,18 @@ export function activate(context: vscode.ExtensionContext): void {
       async () => {
         await importKnowledgeDocuments();
       }
+    ),
+    vscode.commands.registerCommand(
+      "readCodeInChinese.syncOfficialDocsForActiveLanguage",
+      async () => {
+        await syncOfficialDocsForActiveEditorLanguage();
+      }
+    ),
+    vscode.commands.registerCommand(
+      "readCodeInChinese.showLogs",
+      () => {
+        logger.show(false);
+      }
     )
   ];
 
@@ -117,25 +160,38 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(CONFIG_NAMESPACE)) {
+        logger.info("Configuration changed");
         updateStatusBar(statusBarItem);
+        syncPanelContext(vscode.window.activeTextEditor);
       }
     }),
-    vscode.window.onDidChangeActiveTextEditor(async () => {
+    vscode.window.onDidChangeActiveTextEditor(async (editor) => {
+      logger.info("Active editor changed", {
+        filePath: editor?.document.uri.fsPath,
+        languageId: editor?.document.languageId
+      });
+      syncPanelContext(editor);
       await refreshGlossaryForActiveEditor(false);
     }),
     vscode.workspace.onDidSaveTextDocument(async (document) => {
       if (vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString()) {
+        logger.info("Active document saved", {
+          filePath: document.uri.fsPath
+        });
         await refreshGlossaryForActiveEditor(false);
       }
     }),
     vscode.window.onDidChangeTextEditorSelection(async (event) => {
-      const settings = getSettings();
+      syncPanelContext(event.textEditor);
 
-      if (!settings.autoExplainEnabled) {
+      if (!event.textEditor.selection || event.textEditor.selection.isEmpty) {
         return;
       }
 
-      if (!event.textEditor.selection || event.textEditor.selection.isEmpty) {
+      const shouldWatchSelection =
+        getSettings().autoExplainEnabled || panel.isWatchingSelection();
+
+      if (!shouldWatchSelection) {
         return;
       }
 
@@ -163,27 +219,37 @@ export function activate(context: vscode.ExtensionContext): void {
       lastAutoExplainSignature = signature;
       clearTimeout(autoExplainTimeout);
       autoExplainTimeout = setTimeout(() => {
-        void explainSelection("auto");
-      }, settings.autoExplainDelayMs);
+        void explainSelection("auto", {
+          showProgress: false,
+          showWarnings: false,
+          revealPanel: false
+        });
+      }, getSettings().autoExplainDelayMs);
     })
   );
 
   updateStatusBar(statusBarItem);
+  syncPanelContext(vscode.window.activeTextEditor);
   void refreshGlossaryForActiveEditor(false);
 
-  async function explainSelection(reason: "manual" | "auto"): Promise<void> {
+  async function explainSelection(
+    reason: "manual" | "auto",
+    options: ExplainSelectionOptions
+  ): Promise<void> {
     const editor = vscode.window.activeTextEditor;
 
     if (!editor) {
-      await vscode.window.showWarningMessage(
-        "Read Code In Chinese: open a file before requesting an explanation."
+      await handleSelectionFailure(
+        "Read Code In Chinese: open a file before requesting an explanation.",
+        options
       );
       return;
     }
 
     if (editor.selection.isEmpty) {
-      await vscode.window.showWarningMessage(
-        "Read Code In Chinese: select some code before requesting an explanation."
+      await handleSelectionFailure(
+        "Read Code In Chinese: select some code before requesting an explanation.",
+        options
       );
       return;
     }
@@ -191,73 +257,110 @@ export function activate(context: vscode.ExtensionContext): void {
     const selectedText = editor.document.getText(editor.selection).trim();
 
     if (!selectedText) {
-      await vscode.window.showWarningMessage(
-        "Read Code In Chinese: the current selection is empty."
+      await handleSelectionFailure(
+        "Read Code In Chinese: the current selection is empty.",
+        options
       );
       return;
     }
 
-    const progressTitle =
-      reason === "auto"
-        ? "Read Code In Chinese: auto explanation"
-        : "Read Code In Chinese: generating explanation";
+    const execute = async (): Promise<void> => {
+      const projectContext = getProjectContext(editor.document, logger);
 
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: progressTitle,
-        cancellable: false
-      },
-      async () => {
-        const projectContext = getProjectContext(editor.document);
-
-        if (!projectContext) {
-          await vscode.window.showWarningMessage(
-            "Read Code In Chinese: open a workspace folder to enable caching and knowledge features."
-          );
-          return;
-        }
-
-        const { relativeFilePath, workspaceStore, knowledgeStore } = projectContext;
-        await workspaceStore.ensureProjectDataDirectories();
-        const glossaryEntries = await getOrCreateGlossary(
-          workspaceStore,
-          editor.document,
-          relativeFilePath
+      if (!projectContext) {
+        await handleSelectionFailure(
+          "Read Code In Chinese: open a workspace folder to enable caching and knowledge features.",
+          options
         );
-        sessionState.glossaryEntries = glossaryEntries;
-        glossaryTreeProvider.setEntries(glossaryEntries);
-        const request = await createExplanationRequest(
-          editor,
-          selectedText,
-          inferGranularity(
-            selectedText,
-            editor.selection.end.line - editor.selection.start.line + 1
-          ),
-          reason,
-          glossaryEntries,
-          knowledgeStore,
-          relativeFilePath
-        );
-        const provider = createProvider(getSettings());
-        const response = await runExplanationWithFallback(provider, request);
-
-        sessionState.request = request;
-        sessionState.explanation = response;
-        sessionState.chatHistory = [];
-        panel.setState({
-          explanation: response,
-          chatHistory: sessionState.chatHistory,
-          glossaryEntries: glossaryEntries,
-          workspaceIndex: sessionState.workspaceIndex,
-          statusMessage: `Source: ${response.source} | Latency: ${response.latencyMs} ms`
-        });
-
-        if (getSettings().autoOpenPanel || reason === "manual") {
-          panel.show();
-        }
+        return;
       }
-    );
+
+      const { relativeFilePath, workspaceStore, knowledgeStore } = projectContext;
+      await workspaceStore.ensureProjectDataDirectories();
+
+      panel.setState({
+        isWatchingSelection: panel.isWatchingSelection(),
+        currentFile: relativeFilePath,
+        currentSelectionLabel: formatSelectionLabel(editor.selection),
+        statusMessage:
+          reason === "auto"
+            ? "Watching selection and updating explanation..."
+            : "Generating explanation..."
+      });
+
+      const glossaryEntries = await getOrCreateGlossary(
+        workspaceStore,
+        editor.document,
+        relativeFilePath,
+        false,
+        logger
+      );
+      sessionState.glossaryEntries = glossaryEntries;
+      glossaryTreeProvider.setEntries(glossaryEntries);
+
+      const request = await createExplanationRequest(
+        editor,
+        selectedText,
+        inferGranularity(
+          selectedText,
+          editor.selection.end.line - editor.selection.start.line + 1
+        ),
+        reason,
+        glossaryEntries,
+        knowledgeStore,
+        relativeFilePath
+      );
+      const provider = createProvider(getSettings(), logger);
+      const response = await runExplanationWithFallback(provider, request, logger);
+
+      sessionState.request = request;
+      sessionState.explanation = response;
+      sessionState.chatHistory = [];
+      panel.setState({
+        explanation: response,
+        chatHistory: sessionState.chatHistory,
+        glossaryEntries,
+        workspaceIndex: sessionState.workspaceIndex,
+        isWatchingSelection: panel.isWatchingSelection(),
+        currentFile: relativeFilePath,
+        currentSelectionLabel: formatSelectionLabel(editor.selection),
+        lastUpdatedAt: new Date().toLocaleString(),
+        statusMessage: `Source: ${response.source} | Latency: ${response.latencyMs} ms`
+      });
+
+      logger.info("Explanation completed", {
+        reason,
+        requestId: request.requestId,
+        source: response.source,
+        latencyMs: response.latencyMs,
+        knowledgeUsed: response.knowledgeUsed
+      });
+
+      if (options.revealPanel || getSettings().autoOpenPanel || panel.isWatchingSelection()) {
+        panel.show();
+        syncPanelContext(editor);
+      }
+    };
+
+    logger.info("Explanation requested", {
+      reason,
+      filePath: editor.document.uri.fsPath,
+      selection: formatSelectionLabel(editor.selection)
+    });
+
+    if (options.showProgress) {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Read Code In Chinese: generating explanation",
+          cancellable: false
+        },
+        execute
+      );
+      return;
+    }
+
+    await execute();
   }
 
   async function explainCurrentFile(): Promise<void> {
@@ -277,7 +380,7 @@ export function activate(context: vscode.ExtensionContext): void {
         cancellable: false
       },
       async () => {
-        const projectContext = getProjectContext(editor.document);
+        const projectContext = getProjectContext(editor.document, logger);
 
         if (!projectContext) {
           await vscode.window.showWarningMessage(
@@ -291,10 +394,13 @@ export function activate(context: vscode.ExtensionContext): void {
         const glossaryEntries = await getOrCreateGlossary(
           workspaceStore,
           editor.document,
-          relativeFilePath
+          relativeFilePath,
+          false,
+          logger
         );
         sessionState.glossaryEntries = glossaryEntries;
         glossaryTreeProvider.setEntries(glossaryEntries);
+
         const request = await createExplanationRequest(
           editor,
           editor.document.getText(),
@@ -304,8 +410,8 @@ export function activate(context: vscode.ExtensionContext): void {
           knowledgeStore,
           relativeFilePath
         );
-        const provider = createProvider(getSettings());
-        const response = await runExplanationWithFallback(provider, request);
+        const provider = createProvider(getSettings(), logger);
+        const response = await runExplanationWithFallback(provider, request, logger);
 
         sessionState.request = request;
         sessionState.explanation = response;
@@ -314,9 +420,20 @@ export function activate(context: vscode.ExtensionContext): void {
           explanation: response,
           chatHistory: [],
           glossaryEntries,
+          isWatchingSelection: panel.isWatchingSelection(),
+          currentFile: relativeFilePath,
+          currentSelectionLabel: "Entire file",
+          lastUpdatedAt: new Date().toLocaleString(),
           statusMessage: `Source: ${response.source} | Latency: ${response.latencyMs} ms`
         });
         panel.show();
+        syncPanelContext(editor);
+
+        logger.info("File overview completed", {
+          filePath: editor.document.uri.fsPath,
+          latencyMs: response.latencyMs,
+          source: response.source
+        });
       }
     );
   }
@@ -331,7 +448,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const projectContext = getProjectContext(editor.document);
+    const projectContext = getProjectContext(editor.document, logger);
 
     if (!projectContext) {
       await vscode.window.showWarningMessage(
@@ -352,6 +469,9 @@ export function activate(context: vscode.ExtensionContext): void {
         sessionState.workspaceIndex = index;
         panel.setState({
           workspaceIndex: index,
+          isWatchingSelection: panel.isWatchingSelection(),
+          currentFile: projectContext.relativeFilePath,
+          lastUpdatedAt: new Date().toLocaleString(),
           statusMessage: `Indexed ${index.files.length} files.`
         });
         panel.show();
@@ -369,6 +489,10 @@ export function activate(context: vscode.ExtensionContext): void {
           preview: false,
           viewColumn: vscode.ViewColumn.Beside
         });
+
+        logger.info("Workspace index generated", {
+          fileCount: index.files.length
+        });
       }
     );
   }
@@ -378,13 +502,25 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (!editor) {
       glossaryTreeProvider.setEntries([]);
+      panel.setState({
+        glossaryEntries: [],
+        currentFile: undefined,
+        currentSelectionLabel: undefined,
+        isWatchingSelection: panel.isWatchingSelection()
+      });
       return;
     }
 
-    const projectContext = getProjectContext(editor.document);
+    const projectContext = getProjectContext(editor.document, logger);
 
     if (!projectContext) {
       glossaryTreeProvider.setEntries([]);
+      panel.setState({
+        glossaryEntries: [],
+        currentFile: path.basename(editor.document.uri.fsPath),
+        currentSelectionLabel: formatSelectionLabel(editor.selection),
+        isWatchingSelection: panel.isWatchingSelection()
+      });
       return;
     }
 
@@ -392,13 +528,17 @@ export function activate(context: vscode.ExtensionContext): void {
       projectContext.workspaceStore,
       editor.document,
       projectContext.relativeFilePath,
-      forceRefresh
+      forceRefresh,
+      logger
     );
 
     sessionState.glossaryEntries = glossaryEntries;
     glossaryTreeProvider.setEntries(glossaryEntries);
     panel.setState({
-      glossaryEntries
+      glossaryEntries,
+      currentFile: projectContext.relativeFilePath,
+      currentSelectionLabel: formatSelectionLabel(editor.selection),
+      isWatchingSelection: panel.isWatchingSelection()
     });
   }
 
@@ -409,7 +549,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const projectContext = getProjectContext(editor.document);
+    const projectContext = getProjectContext(editor.document, logger);
 
     if (!projectContext) {
       return;
@@ -429,7 +569,8 @@ export function activate(context: vscode.ExtensionContext): void {
       projectContext.workspaceStore,
       editor.document,
       projectContext.relativeFilePath,
-      false
+      false,
+      logger
     );
     const updatedEntries = glossaryEntries.map((glossaryEntry) =>
       glossaryEntry.normalizedTerm === entry.normalizedTerm
@@ -457,7 +598,13 @@ export function activate(context: vscode.ExtensionContext): void {
     sessionState.glossaryEntries = updatedEntries;
     glossaryTreeProvider.setEntries(updatedEntries);
     panel.setState({
-      glossaryEntries: updatedEntries
+      glossaryEntries: updatedEntries,
+      lastUpdatedAt: new Date().toLocaleString()
+    });
+
+    logger.info("Glossary entry updated", {
+      term: entry.term,
+      relativeFilePath: projectContext.relativeFilePath
     });
 
     const action = await vscode.window.showInformationMessage(
@@ -466,7 +613,11 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     if (action === "Re-run Explanation" && sessionState.request) {
-      await explainSelection("manual");
+      await explainSelection("manual", {
+        showProgress: true,
+        showWarnings: true,
+        revealPanel: true
+      });
     }
   }
 
@@ -480,7 +631,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const projectContext = getProjectContext(editor.document);
+    const projectContext = getProjectContext(editor.document, logger);
 
     if (!projectContext) {
       await vscode.window.showWarningMessage(
@@ -506,8 +657,69 @@ export function activate(context: vscode.ExtensionContext): void {
       pickedFiles.map((uri) => uri.fsPath)
     );
 
+    panel.setState({
+      statusMessage: `Imported ${importedDocuments.length} knowledge documents.`,
+      lastUpdatedAt: new Date().toLocaleString()
+    });
+
+    logger.info("Knowledge documents imported", {
+      count: importedDocuments.length,
+      files: pickedFiles.map((item) => item.fsPath)
+    });
+
     await vscode.window.showInformationMessage(
       `Read Code In Chinese: imported ${importedDocuments.length} knowledge documents.`
+    );
+  }
+
+  async function syncOfficialDocsForActiveEditorLanguage(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+
+    if (!editor) {
+      await vscode.window.showWarningMessage(
+        "Read Code In Chinese: open a file before syncing official docs."
+      );
+      return;
+    }
+
+    const projectContext = getProjectContext(editor.document, logger);
+
+    if (!projectContext) {
+      await vscode.window.showWarningMessage(
+        "Read Code In Chinese: official docs sync requires an opened workspace folder."
+      );
+      return;
+    }
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Read Code In Chinese: syncing ${editor.document.languageId} docs`,
+        cancellable: false
+      },
+      async () => {
+        await projectContext.workspaceStore.ensureProjectDataDirectories();
+        const syncResult = await syncOfficialDocsForLanguage(editor.document.languageId, logger);
+        await projectContext.knowledgeStore.upsertDocuments(syncResult.importedDocuments);
+        const failureSuffix = syncResult.failedSources.length
+          ? ` Failed: ${syncResult.failedSources.length}.`
+          : "";
+
+        panel.setState({
+          statusMessage: `Synced ${syncResult.importedDocuments.length} official docs for ${syncResult.label}.${failureSuffix}`,
+          lastUpdatedAt: new Date().toLocaleString()
+        });
+
+        logger.info("Official docs synced", {
+          languageId: editor.document.languageId,
+          importedDocuments: syncResult.importedDocuments.length,
+          failedSources: syncResult.failedSources.length
+        });
+
+        await vscode.window.showInformationMessage(
+          `Read Code In Chinese: synced ${syncResult.importedDocuments.length} official docs for ${syncResult.label}.${failureSuffix}`
+        );
+      }
     );
   }
 
@@ -519,19 +731,27 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const provider = createProvider(getSettings());
+    const provider = createProvider(getSettings(), logger);
     sessionState.chatHistory.push({
       role: "user",
       content: question,
       createdAt: new Date().toISOString()
     });
-
-    const followUpResponse = await provider.answerFollowUp({
-      request: sessionState.request,
-      explanation: sessionState.explanation,
-      question,
-      chatHistory: sessionState.chatHistory
+    panel.setState({
+      chatHistory: sessionState.chatHistory,
+      statusMessage: "Generating follow-up answer..."
     });
+
+    const followUpResponse = await runFollowUpWithFallback(
+      provider,
+      {
+        request: sessionState.request,
+        explanation: sessionState.explanation,
+        question,
+        chatHistory: sessionState.chatHistory
+      },
+      logger
+    );
 
     sessionState.chatHistory.push({
       role: "assistant",
@@ -540,7 +760,41 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     panel.setState({
       chatHistory: sessionState.chatHistory,
+      lastUpdatedAt: new Date().toLocaleString(),
       statusMessage: `Source: ${followUpResponse.source} | Latency: ${followUpResponse.latencyMs} ms`
+    });
+  }
+
+  async function handleSelectionFailure(
+    message: string,
+    options: ExplainSelectionOptions
+  ): Promise<void> {
+    logger.warn("Selection explanation skipped", message);
+
+    panel.setState({
+      isWatchingSelection: panel.isWatchingSelection(),
+      statusMessage: message,
+      currentFile: vscode.window.activeTextEditor
+        ? getProjectContext(vscode.window.activeTextEditor.document, logger)?.relativeFilePath ??
+          path.basename(vscode.window.activeTextEditor.document.uri.fsPath)
+        : undefined,
+      currentSelectionLabel: vscode.window.activeTextEditor
+        ? formatSelectionLabel(vscode.window.activeTextEditor.selection)
+        : undefined
+    });
+
+    if (options.showWarnings) {
+      await vscode.window.showWarningMessage(message);
+    }
+  }
+
+  function syncPanelContext(editor: vscode.TextEditor | undefined): void {
+    const projectContext = editor ? getProjectContext(editor.document, logger) : undefined;
+
+    panel.setState({
+      isWatchingSelection: panel.isWatchingSelection(),
+      currentFile: projectContext?.relativeFilePath ?? editor?.document.fileName,
+      currentSelectionLabel: editor ? formatSelectionLabel(editor.selection) : undefined
     });
   }
 }
@@ -548,18 +802,23 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {}
 
 async function runExplanationWithFallback(
-  provider: ReturnType<typeof createProvider>,
-  request: ExplanationRequest
+  provider: ExplanationProvider,
+  request: ExplanationRequest,
+  logger: ExtensionLogger
 ): Promise<ExplanationResponse> {
   try {
     return await provider.explain(request);
   } catch (error) {
-    const fallbackProvider = createProvider({
-      ...getSettings(),
-      providerId: "local",
-      providerBaseUrl: "",
-      providerModel: ""
-    });
+    logger.error("Primary explanation provider failed, using local fallback", error);
+    const fallbackProvider = createProvider(
+      {
+        ...getSettings(),
+        providerId: "local",
+        providerBaseUrl: "",
+        providerModel: ""
+      },
+      logger
+    );
     const response = await fallbackProvider.explain(request);
 
     return {
@@ -571,18 +830,51 @@ async function runExplanationWithFallback(
   }
 }
 
+async function runFollowUpWithFallback(
+  provider: ExplanationProvider,
+  request: Parameters<ExplanationProvider["answerFollowUp"]>[0],
+  logger: ExtensionLogger
+) {
+  try {
+    return await provider.answerFollowUp(request);
+  } catch (error) {
+    logger.error("Primary follow-up provider failed, using local fallback", error);
+    const fallbackProvider = createProvider(
+      {
+        ...getSettings(),
+        providerId: "local",
+        providerBaseUrl: "",
+        providerModel: ""
+      },
+      logger
+    );
+
+    return fallbackProvider.answerFollowUp(request);
+  }
+}
+
 async function getOrCreateGlossary(
   workspaceStore: WorkspaceStore,
   document: vscode.TextDocument,
   relativeFilePath: string,
-  forceRefresh = false
+  forceRefresh = false,
+  logger?: ExtensionLogger
 ): Promise<GlossaryEntry[]> {
   const currentSourceHash = createContentHash(document.getText());
   const existingCache = await workspaceStore.readGlossaryCache(relativeFilePath);
 
   if (!forceRefresh && existingCache && existingCache.sourceHash === currentSourceHash) {
+    logger?.info("Glossary cache hit", {
+      relativeFilePath,
+      entryCount: existingCache.entries.length
+    });
     return existingCache.entries;
   }
+
+  logger?.info("Glossary cache miss", {
+    relativeFilePath,
+    forceRefresh
+  });
 
   const generatedEntries = extractGlossaryEntries(document.getText(), document.languageId);
   const mergedEntries = mergeGlossaryWithUserOverrides(
@@ -667,6 +959,7 @@ async function createExplanationRequest(
     professionalLevel: settings.professionalLevel,
     sections: settings.sections,
     userGoal: settings.userGoal,
+    customInstructions: settings.customInstructions,
     contextBefore,
     contextAfter,
     glossaryEntries,
@@ -674,7 +967,10 @@ async function createExplanationRequest(
   };
 }
 
-function getProjectContext(document: vscode.TextDocument):
+function getProjectContext(
+  document: vscode.TextDocument,
+  logger?: ExtensionLogger
+):
   | {
       workspaceRoot: string;
       relativeFilePath: string;
@@ -691,7 +987,7 @@ function getProjectContext(document: vscode.TextDocument):
   const workspaceRoot = workspaceFolder.uri.fsPath;
   const relativeFilePath = path.relative(workspaceRoot, document.uri.fsPath).replace(/\\/g, "/");
   const workspaceStore = new WorkspaceStore(workspaceRoot);
-  const knowledgeStore = new KnowledgeStore(workspaceStore);
+  const knowledgeStore = new KnowledgeStore(workspaceStore, logger);
 
   return {
     workspaceRoot,
@@ -810,5 +1106,21 @@ async function toggleAutoExplain(statusBarItem: vscode.StatusBarItem): Promise<v
 
   await vscode.window.showInformationMessage(
     `Read Code In Chinese: auto explain ${nextValue ? "enabled" : "disabled"} for this workspace.`
+  );
+}
+
+function formatSelectionLabel(selection: vscode.Selection): string | undefined {
+  if (selection.isEmpty) {
+    return undefined;
+  }
+
+  return `L${selection.start.line + 1}:C${selection.start.character + 1} - L${selection.end.line + 1}:C${selection.end.character + 1}`;
+}
+
+function hasNonEmptySelection(editor: vscode.TextEditor | undefined): boolean {
+  return Boolean(
+    editor &&
+      !editor.selection.isEmpty &&
+      editor.document.getText(editor.selection).trim()
   );
 }

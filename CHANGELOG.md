@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0 - 2026-04-14
+
+- Added a VS Code output channel logger and richer runtime diagnostics
+- Added panel-open selection watching so explanations refresh automatically while the panel stays open
+- Added official docs sync for active languages and improved knowledge search scoring
+- Added provider hyperparameters and custom prompt instruction settings
+- Simplified the panel UI and surfaced selection metadata, glossary snapshot, and status details
+- Validated the remote provider against a real OpenAI-compatible `gpt-5.4` endpoint
+- Added local ignored VS Code debug settings for real API testing
+- Added tests for official docs presets and knowledge ranking
+- Hardened remote parsing and fallback behavior
+- Fixed local provider text corruption caused by unstable source strings
+
 ## 0.2.0 - 2026-04-13
 
 - Added structured explanation pipeline with local and OpenAI-compatible providers

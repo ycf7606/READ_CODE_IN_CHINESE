@@ -1,18 +1,21 @@
 import { ExtensionSettings } from "../contracts";
+import { ExtensionLogger } from "../logging/logger";
 import { LocalExplanationProvider } from "./localProvider";
 import { OpenAICompatibleProvider } from "./openAICompatibleProvider";
 import { ExplanationProvider } from "./providerTypes";
 
-export function createProvider(settings: ExtensionSettings): ExplanationProvider {
+export function createProvider(
+  settings: ExtensionSettings,
+  logger?: ExtensionLogger
+): ExplanationProvider {
   const hasRemoteConfig =
     settings.providerId === "openai-compatible" &&
     Boolean(settings.providerBaseUrl) &&
-    Boolean(settings.providerModel) &&
-    Boolean(process.env[settings.providerApiKeyEnvVar]);
+    Boolean(settings.providerModel);
 
   if (hasRemoteConfig) {
-    return new OpenAICompatibleProvider(settings);
+    return new OpenAICompatibleProvider(settings, logger);
   }
 
-  return new LocalExplanationProvider();
+  return new LocalExplanationProvider(logger);
 }

@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 7
-- Latest summary: `docs/project/summaries/2026-04-13-stage-7.md`
+- Latest completed milestone: Stage 8
+- Latest summary: `docs/project/summaries/2026-04-14-stage-8.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -32,6 +32,7 @@ Every future work session must read these files in order before making changes:
 | 5 | Follow-up chat | Completed | Webview panel and follow-up conversation |
 | 6 | Knowledge augmentation | Completed | Local knowledge import and retrieval attachment |
 | 7 | Open-source polish | Completed | Docs, tests, CI, and packaging polish |
+| 8 | Runtime polish and market-readiness | Completed | Logging, official docs sync, cleaner panel UX, prompt controls, and real API validation |
 
 ## Completed Tasks
 
@@ -71,6 +72,12 @@ Every future work session must read these files in order before making changes:
 - [x] S7-02 Add CI workflow and packaging ignore rules.
 - [x] S7-03 Expand README and supporting repository documentation.
 - [x] S7-04 Produce the Stage 7 summary file.
+- [x] S8-01 Add runtime logging and an output channel for extension diagnostics.
+- [x] S8-02 Make the panel watch active selections and simplify the panel UI.
+- [x] S8-03 Add official docs sync and improve workspace knowledge retrieval scoring.
+- [x] S8-04 Add custom prompt instructions and remote hyperparameter controls.
+- [x] S8-05 Validate the remote provider and official docs sync with real network smoke tests.
+- [x] S8-06 Produce the Stage 8 summary file.
 
 ## Current Todo
 
@@ -86,6 +93,7 @@ Every future work session must read these files in order before making changes:
 
 ## Notes
 
-- The core extension workflow is implemented end-to-end and validated by compile plus unit tests.
+- The core extension workflow is implemented end-to-end and validated by compile, unit tests, remote provider smoke tests, and official docs sync smoke tests.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
+- Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

@@ -1,6 +1,6 @@
 # READ_CODE_IN_CHINESE
 
-`READ_CODE_IN_CHINESE` is a VS Code extension for turning source code into concise Chinese explanations while keeping terminology, file role, and follow-up questions in one workflow.
+`READ_CODE_IN_CHINESE` is a VS Code extension for turning source code into concise Chinese explanations while keeping terminology, official reference context, file role, and follow-up questions in one workflow.
 
 ## What It Does
 
@@ -16,16 +16,17 @@
 - Let users edit glossary meanings and re-run explanations
 - Support follow-up chat in a side panel
 - Import local knowledge documents for retrieval-enhanced explanations
+- Sync official language documents into the workspace knowledge library
+- Keep the panel open and automatically refresh when the code selection changes
+- Write runtime diagnostics into a dedicated VS Code output channel
 - Use either:
   - a local heuristic engine
   - an OpenAI-compatible remote provider
 
 ## Current Status
 
-- Stage 0 completed
-- Stage 1 completed
-- Stage 2-6 implementation is present in the extension codebase
-- Stage 7 open-source polish is complete through docs, tests, and CI
+- Stage 0-7 completed
+- Stage 8 runtime polish is complete through logging, official docs sync, cleaner panel UI, and real API validation
 - Tracking board: `docs/project/WORKBOARD.md`
 
 ## Main Commands
@@ -37,6 +38,8 @@
 - `Read Code In Chinese: Generate Workspace Index`
 - `Read Code In Chinese: Refresh Glossary`
 - `Read Code In Chinese: Import Knowledge Documents`
+- `Read Code In Chinese: Sync Official Docs For Active Language`
+- `Read Code In Chinese: Show Logs`
 
 ## Default Shortcuts
 
@@ -49,9 +52,13 @@
 - Explorer sidebar view: `Code Glossary`
 - Webview panel:
   - latest explanation
+  - active file and selection metadata
+  - automatic selection watching when the panel is open
   - suggested follow-up questions
+  - glossary snapshot
   - workspace index preview
   - follow-up chat
+- Output channel: `Read Code In Chinese`
 
 ## Configuration
 
@@ -68,6 +75,9 @@
 - `readCodeInChinese.provider.model`
 - `readCodeInChinese.provider.apiKeyEnvVar`
 - `readCodeInChinese.provider.timeoutMs`
+- `readCodeInChinese.provider.temperature`
+- `readCodeInChinese.provider.topP`
+- `readCodeInChinese.provider.maxTokens`
 
 ### Explanation Output
 
@@ -75,6 +85,7 @@
 - `readCodeInChinese.explanation.professionalLevel`
 - `readCodeInChinese.explanation.sections`
 - `readCodeInChinese.explanation.userGoal`
+- `readCodeInChinese.prompt.customInstructions`
 
 ### Knowledge Retrieval
 
@@ -99,6 +110,9 @@ Use `readCodeInChinese.provider.id = openai-compatible` and set:
 
 - `readCodeInChinese.provider.baseUrl`
 - `readCodeInChinese.provider.model`
+- `readCodeInChinese.provider.temperature`
+- `readCodeInChinese.provider.topP`
+- `readCodeInChinese.provider.maxTokens`
 - environment variable named by `readCodeInChinese.provider.apiKeyEnvVar`
 
 Example in PowerShell:
@@ -128,6 +142,21 @@ Sample schema:
 ```
 
 More detail: `docs/knowledge/IMPORTING_KNOWLEDGE.md`
+
+## Official Docs Sync
+
+The extension can fetch a preset bundle of official or reference language documents into the same workspace knowledge library.
+
+- Command: `Read Code In Chinese: Sync Official Docs For Active Language`
+- Current presets cover:
+  - TypeScript
+  - JavaScript
+  - Python
+  - Go
+  - Rust
+  - Java
+- Synced documents are chunked and stored in `.read-code-in-chinese/knowledge/library.json`
+- Partial sync success is allowed, so one failed page does not cancel the whole import
 
 ## Glossary Workflow
 
@@ -169,17 +198,20 @@ npm.cmd test
 1. Open this repository in VS Code.
 2. Run `npm.cmd install`.
 3. Run `npm.cmd run compile`.
-4. Press `F5` to start the Extension Development Host.
-5. Open a source file and try the commands from the command palette.
+4. Put your API key into `.vscode/.env` if you want to test the remote provider locally.
+5. Press `F5` to start the Extension Development Host.
+6. Open the command palette and run `Read Code In Chinese: Open Conversation Panel`.
+7. Keep the panel open and select code to verify automatic explanation updates.
 
 ## Architecture
 
 High-level architecture:
 
-- `src/extension.ts`: command wiring, selection listeners, session flow
+- `src/extension.ts`: command wiring, selection listeners, session flow, logging, and fallback handling
 - `src/analysis/`: glossary extraction and summary heuristics
 - `src/providers/`: local and OpenAI-compatible providers
-- `src/knowledge/`: imported knowledge document store and retrieval
+- `src/knowledge/`: imported knowledge document store, official docs sync, and retrieval
+- `src/logging/`: output channel runtime logger
 - `src/storage/`: workspace cache paths and JSON persistence
 - `src/ui/`: glossary tree and explanation panel
 

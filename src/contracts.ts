@@ -37,11 +37,15 @@ export interface ExtensionSettings {
   providerModel: string;
   providerApiKeyEnvVar: string;
   providerTimeoutMs: number;
+  providerTemperature: number;
+  providerTopP: number;
+  providerMaxTokens: number;
   detailLevel: DetailLevel;
   professionalLevel: ProfessionalLevel;
   sections: ExplanationSectionName[];
   userGoal: string;
   knowledgeTopK: number;
+  customInstructions: string;
 }
 
 export interface GlossaryEntry {
@@ -70,6 +74,9 @@ export interface KnowledgeDocument {
   importedAt: string;
   tags: string[];
   content: string;
+  sourceType?: "imported" | "official-doc";
+  languageId?: string;
+  canonicalUrl?: string;
 }
 
 export interface KnowledgeLibraryFile {
@@ -95,6 +102,7 @@ export interface ExplanationRequest {
   professionalLevel: ProfessionalLevel;
   sections: ExplanationSectionName[];
   userGoal: string;
+  customInstructions: string;
   contextBefore: string;
   contextAfter: string;
   glossaryEntries: GlossaryEntry[];
