@@ -1,0 +1,126 @@
+{
+  "name": "read-code-in-chinese",
+  "displayName": "Read Code In Chinese",
+  "description": "VS Code extension for turning source code into concise Chinese explanations.",
+  "version": "0.1.0",
+  "publisher": "ycf7606",
+  "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ycf7606/READ_CODE_IN_CHINESE.git"
+  },
+  "engines": {
+    "vscode": "^1.89.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:readCodeInChinese.explainSelection",
+    "onCommand:readCodeInChinese.toggleAutoExplain"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "readCodeInChinese.explainSelection",
+        "title": "Read Code In Chinese: Explain Selection"
+      },
+      {
+        "command": "readCodeInChinese.toggleAutoExplain",
+        "title": "Read Code In Chinese: Toggle Auto Explain"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "readCodeInChinese.explainSelection",
+        "key": "ctrl+alt+e",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "readCodeInChinese.toggleAutoExplain",
+        "key": "ctrl+alt+t",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "Read Code In Chinese",
+      "properties": {
+        "readCodeInChinese.autoExplain.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the future automatic explanation flow when text selection changes."
+        },
+        "readCodeInChinese.provider.id": {
+          "type": "string",
+          "default": "openai-compatible",
+          "description": "Logical identifier of the model provider adapter."
+        },
+        "readCodeInChinese.provider.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for the model provider API."
+        },
+        "readCodeInChinese.provider.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model name used for explanation requests."
+        },
+        "readCodeInChinese.provider.apiKeyEnvVar": {
+          "type": "string",
+          "default": "READ_CODE_IN_CHINESE_API_KEY",
+          "description": "Environment variable name that stores the API key."
+        },
+        "readCodeInChinese.explanation.detailLevel": {
+          "type": "string",
+          "enum": [
+            "fast",
+            "balanced",
+            "deep"
+          ],
+          "default": "balanced",
+          "description": "Controls explanation depth and latency preference."
+        },
+        "readCodeInChinese.explanation.professionalLevel": {
+          "type": "string",
+          "enum": [
+            "beginner",
+            "intermediate",
+            "expert"
+          ],
+          "default": "intermediate",
+          "description": "Controls how much domain-specific terminology should be used."
+        },
+        "readCodeInChinese.explanation.sections": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "inputOutput",
+              "usage",
+              "syntax",
+              "risk"
+            ]
+          },
+          "default": [
+            "summary",
+            "usage"
+          ],
+          "description": "Sections that the explanation output should try to include."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "check": "tsc --noEmit -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.24",
+    "@types/vscode": "^1.89.0",
+    "typescript": "^5.6.3"
+  }
+}

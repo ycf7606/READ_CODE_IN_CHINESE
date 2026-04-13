@@ -43,3 +43,56 @@
 - Result: Captured milestone output, decisions, risks, and next tasks in a reusable summary file.
 - Files: `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-13-stage-0.md`
 - Verification: Summary path is recorded as the latest summary in the workboard.
+
+### S1-01 Create the extension scaffold
+
+- Stage: 1
+- Result: Added the VS Code extension manifest, TypeScript compiler config, source entry point, and git ignore rules.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\package.json`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\tsconfig.json`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\.gitignore`
+- Verification: Repository now contains a valid extension skeleton and source entry.
+
+### S1-02 Register base commands
+
+- Stage: 1
+- Result: Registered `Explain Selection` and `Toggle Auto Explain` commands with command palette and keybindings.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\package.json`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification: Commands are declared in the manifest and implemented in the extension entry point.
+
+### S1-03 Add configuration schema
+
+- Stage: 1
+- Result: Added workspace settings for provider id, base URL, model, API key environment variable, detail level, professional level, and explanation sections.
+- Files: `D:\project\代码翻译\READ_CODE_IN_CHINESE\package.json`
+- Verification: Settings are exposed through `contributes.configuration` and consumed by the extension code.
+
+### S1-04 Add placeholder execution path
+
+- Stage: 1
+- Result: The extension can read the current selection and show a placeholder explanation message inside VS Code.
+- Files: `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification: The placeholder message path is implemented and wired to the command.
+
+### S1-05 Install dependencies and compile output
+
+- Stage: 1
+- Result: Installed TypeScript and type packages, then generated `dist/extension.js`.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\package-lock.json`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\dist\extension.js`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\dist\extension.js.map`
+- Verification:
+  - `npm.cmd install`
+  - `npm.cmd run compile`
+
+### S1-06 Publish the Stage 1 summary
+
+- Stage: 1
+- Result: Captured the scaffold milestone output, validation result, and next-stage direction.
+- Files: `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-13-stage-1.md`
+- Verification: Workboard points to the Stage 1 summary as the latest milestone.
