@@ -96,3 +96,58 @@
 - Result: Captured the scaffold milestone output, validation result, and next-stage direction.
 - Files: `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-13-stage-1.md`
 - Verification: Workboard points to the Stage 1 summary as the latest milestone.
+
+### S2-01 Define explanation contracts and pipeline
+
+- Stage: 2
+- Result: Added typed explanation requests, responses, prompt construction, provider contracts, and fallback execution flow.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\contracts.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\config.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\providerTypes.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\createProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\localProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\openAICompatibleProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\prompts\openAICompatiblePrompt.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification: `npm.cmd run compile`
+
+### S3-01 Add glossary cache and sidebar workflow
+
+- Stage: 3
+- Result: Added glossary extraction, cache persistence, Explorer sidebar rendering, and user override preservation.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\analysis\glossary.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\storage\workspaceStore.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\glossaryTreeProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification: `npm.cmd run compile`
+
+### S4-01 Add multi-granularity explanation flow
+
+- Stage: 4
+- Result: Added token, statement, block, function, file, and workspace-level explanation paths.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\analysis\summary.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification: `npm.cmd run compile`
+
+### S5-01 Add panel-based interaction and follow-up chat
+
+- Stage: 5
+- Result: Added the explanation panel, suggested questions, follow-up chat, and automatic explanation mode.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\package.json`
+- Verification: `npm.cmd run compile`
+
+### S6-01 Add imported knowledge retrieval
+
+- Stage: 6
+- Result: Added workspace-local knowledge import and retrieval for explanation requests.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\knowledge\knowledgeStore.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\prompts\openAICompatiblePrompt.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification: `npm.cmd run compile`

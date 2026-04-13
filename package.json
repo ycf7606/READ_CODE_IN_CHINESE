@@ -2,7 +2,7 @@
   "name": "read-code-in-chinese",
   "displayName": "Read Code In Chinese",
   "description": "VS Code extension for turning source code into concise Chinese explanations.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "ycf7606",
   "license": "MPL-2.0",
   "repository": {
@@ -15,9 +15,21 @@
   "categories": [
     "Other"
   ],
+  "keywords": [
+    "code-reading",
+    "source-code",
+    "glossary",
+    "vscode-extension",
+    "ai"
+  ],
   "activationEvents": [
     "onCommand:readCodeInChinese.explainSelection",
-    "onCommand:readCodeInChinese.toggleAutoExplain"
+    "onCommand:readCodeInChinese.toggleAutoExplain",
+    "onCommand:readCodeInChinese.openConversationPanel",
+    "onCommand:readCodeInChinese.explainCurrentFile",
+    "onCommand:readCodeInChinese.generateWorkspaceIndex",
+    "onCommand:readCodeInChinese.refreshGlossary",
+    "onCommand:readCodeInChinese.importKnowledgeDocuments"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -29,6 +41,30 @@
       {
         "command": "readCodeInChinese.toggleAutoExplain",
         "title": "Read Code In Chinese: Toggle Auto Explain"
+      },
+      {
+        "command": "readCodeInChinese.openConversationPanel",
+        "title": "Read Code In Chinese: Open Conversation Panel"
+      },
+      {
+        "command": "readCodeInChinese.explainCurrentFile",
+        "title": "Read Code In Chinese: Explain Current File"
+      },
+      {
+        "command": "readCodeInChinese.generateWorkspaceIndex",
+        "title": "Read Code In Chinese: Generate Workspace Index"
+      },
+      {
+        "command": "readCodeInChinese.refreshGlossary",
+        "title": "Read Code In Chinese: Refresh Glossary"
+      },
+      {
+        "command": "readCodeInChinese.editGlossaryEntry",
+        "title": "Read Code In Chinese: Edit Glossary Entry"
+      },
+      {
+        "command": "readCodeInChinese.importKnowledgeDocuments",
+        "title": "Read Code In Chinese: Import Knowledge Documents"
       }
     ],
     "keybindings": [
@@ -41,25 +77,62 @@
         "command": "readCodeInChinese.toggleAutoExplain",
         "key": "ctrl+alt+t",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "readCodeInChinese.explainCurrentFile",
+        "key": "ctrl+alt+f",
+        "when": "editorTextFocus"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "readCodeInChinese.refreshGlossary",
+          "when": "view == readCodeInChinese.glossaryView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "readCodeInChinese.glossaryView",
+          "name": "Code Glossary"
+        }
+      ]
+    },
     "configuration": {
       "title": "Read Code In Chinese",
       "properties": {
         "readCodeInChinese.autoExplain.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "Enable the future automatic explanation flow when text selection changes."
+          "description": "Trigger explanations when the editor selection changes."
+        },
+        "readCodeInChinese.autoExplain.delayMs": {
+          "type": "number",
+          "default": 600,
+          "minimum": 100,
+          "description": "Debounce delay for automatic explanations."
+        },
+        "readCodeInChinese.ui.autoOpenPanel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reveal the explanation panel after a new explanation is generated."
         },
         "readCodeInChinese.provider.id": {
           "type": "string",
-          "default": "openai-compatible",
-          "description": "Logical identifier of the model provider adapter."
+          "enum": [
+            "local",
+            "openai-compatible"
+          ],
+          "default": "local",
+          "description": "Provider adapter to use for explanations."
         },
         "readCodeInChinese.provider.baseUrl": {
           "type": "string",
           "default": "",
-          "description": "Base URL for the model provider API."
+          "description": "Base URL for an OpenAI-compatible chat completion endpoint."
         },
         "readCodeInChinese.provider.model": {
           "type": "string",
@@ -70,6 +143,12 @@
           "type": "string",
           "default": "READ_CODE_IN_CHINESE_API_KEY",
           "description": "Environment variable name that stores the API key."
+        },
+        "readCodeInChinese.provider.timeoutMs": {
+          "type": "number",
+          "default": 20000,
+          "minimum": 1000,
+          "description": "Request timeout for the remote provider."
         },
         "readCodeInChinese.explanation.detailLevel": {
           "type": "string",
@@ -108,6 +187,17 @@
             "usage"
           ],
           "description": "Sections that the explanation output should try to include."
+        },
+        "readCodeInChinese.explanation.userGoal": {
+          "type": "string",
+          "default": "",
+          "description": "Optional learning goal that is injected into explanation prompts."
+        },
+        "readCodeInChinese.knowledge.topK": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "description": "Maximum number of imported knowledge snippets to attach to each explanation."
         }
       }
     }
@@ -116,6 +206,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "check": "tsc --noEmit -p ./",
+    "test": "npm run compile && node --test dist/test/index.test.js",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

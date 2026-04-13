@@ -1,0 +1,6 @@
+.github/**
+docs/project/**
+src/**
+tsconfig.json
+node_modules/**
+**/*.ts

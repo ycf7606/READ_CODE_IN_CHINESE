@@ -1,0 +1,12 @@
+[
+  {
+    "title": "fetch API basics",
+    "content": "fetch(url, options) sends an HTTP request and returns a promise that resolves to a response object.",
+    "tags": ["javascript", "http", "fetch"]
+  },
+  {
+    "title": "VS Code command registration",
+    "content": "Register commands with vscode.commands.registerCommand and dispose them through the extension context subscriptions.",
+    "tags": ["vscode", "commands", "extension"]
+  }
+]
