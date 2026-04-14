@@ -306,6 +306,62 @@ export class ExplanationPanel implements vscode.Disposable {
         font-size: 11px;
       }
 
+      .wordbook-tree {
+        display: grid;
+        gap: 4px;
+      }
+
+      .tree-group,
+      .tree-term {
+        border-radius: 8px;
+        border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 80%, transparent);
+        background: color-mix(in srgb, var(--vscode-editorWidget-background) 72%, transparent);
+      }
+
+      .tree-group > summary,
+      .tree-term > summary {
+        cursor: pointer;
+        padding: 4px 8px;
+      }
+
+      .tree-group > summary {
+        font-weight: 600;
+      }
+
+      .tree-term > summary {
+        font-weight: 500;
+      }
+
+      .tree-label {
+        font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
+        font-size: 12px;
+      }
+
+      .tree-children {
+        display: grid;
+        gap: 4px;
+        margin: 0 0 6px 10px;
+        padding-left: 10px;
+        border-left: 1px solid color-mix(in srgb, var(--vscode-panel-border) 72%, transparent);
+      }
+
+      .tree-term-body {
+        display: grid;
+        gap: 4px;
+        padding: 0 10px 10px 24px;
+      }
+
+      .tree-term-meta {
+        color: var(--vscode-descriptionForeground);
+        font-size: 11px;
+      }
+
+      .tree-term-summary {
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+
       .muted {
         color: var(--vscode-descriptionForeground);
       }
@@ -634,6 +690,123 @@ export class ExplanationPanel implements vscode.Disposable {
         detectedType.appendChild(chip);
       }
 
+      function buildWordbookTree(entries) {
+        const root = {
+          groups: [],
+          terms: [],
+          groupMap: new Map()
+        };
+        const sortedEntries = [...entries].sort((left, right) => {
+          return (
+            (left.sourceLine || Number.MAX_SAFE_INTEGER) -
+              (right.sourceLine || Number.MAX_SAFE_INTEGER) ||
+            left.term.localeCompare(right.term)
+          );
+        });
+
+        for (const entry of sortedEntries) {
+          const path =
+            Array.isArray(entry.scopePath) && entry.scopePath.length
+              ? entry.scopePath
+              : ["Module Scope"];
+          let current = root;
+
+          for (const segment of path) {
+            let group = current.groupMap.get(segment);
+
+            if (!group) {
+              group = {
+                label: segment,
+                groups: [],
+                terms: [],
+                groupMap: new Map()
+              };
+              current.groupMap.set(segment, group);
+              current.groups.push(group);
+            }
+
+            current = group;
+          }
+
+          current.terms.push(entry);
+        }
+
+        return root;
+      }
+
+      function renderWordbookEntry(entry) {
+        const details = document.createElement("details");
+        details.className = "tree-term";
+
+        const summary = document.createElement("summary");
+        const label = document.createElement("span");
+        label.className = "tree-label";
+        label.textContent = entry.term;
+        summary.appendChild(label);
+        details.appendChild(summary);
+
+        const body = document.createElement("div");
+        body.className = "tree-term-body";
+
+        const meta = document.createElement("div");
+        meta.className = "tree-term-meta";
+        meta.textContent = entry.category + " | line " + entry.sourceLine;
+        body.appendChild(meta);
+
+        const description = document.createElement("div");
+        description.className = "tree-term-summary";
+        description.textContent = entry.summary;
+        body.appendChild(description);
+
+        details.appendChild(body);
+        return details;
+      }
+
+      function renderWordbookGroup(group) {
+        const details = document.createElement("details");
+        details.className = "tree-group";
+
+        const summary = document.createElement("summary");
+        const label = document.createElement("span");
+        label.className = "tree-label";
+        label.textContent = group.label;
+        summary.appendChild(label);
+        details.appendChild(summary);
+
+        const children = document.createElement("div");
+        children.className = "tree-children";
+
+        for (const childGroup of group.groups) {
+          children.appendChild(renderWordbookGroup(childGroup));
+        }
+
+        for (const entry of group.terms) {
+          children.appendChild(renderWordbookEntry(entry));
+        }
+
+        details.appendChild(children);
+        return details;
+      }
+
+      function renderWordbook(entries) {
+        wordbook.innerHTML = "";
+
+        if (!entries.length) {
+          renderEmpty(wordbook, "Run preprocessing to build the current file wordbook.");
+          return;
+        }
+
+        const tree = buildWordbookTree(entries);
+        const container = document.createElement("div");
+        container.className = "wordbook-tree";
+
+        for (const group of tree.groups) {
+          container.appendChild(renderWordbookGroup(group));
+        }
+
+        wordbook.appendChild(container);
+      }
+
       function renderPreprocess(progress) {
         const lines = [];
         let percentage = 0;
@@ -641,6 +814,7 @@ export class ExplanationPanel implements vscode.Disposable {
         if (progress) {
           const candidatePoolCount = progress.candidatePoolCount || progress.totalCandidates;
           const selectingStep = (progress.currentStep || "").toLowerCase().includes("select");
+          const preparingStep = (progress.currentStep || "").toLowerCase().includes("prepar");
 
           if (selectingStep) {
             lines.push("Candidate pool: " + candidatePoolCount);
@@ -652,12 +826,14 @@ export class ExplanationPanel implements vscode.Disposable {
             }
           }
 
-          lines.push(
-            "Batches: " +
-              (progress.processedBatches || 0) +
-              " / " +
-              progress.batchCount
-          );
+          if (!selectingStep && !preparingStep && progress.batchCount > 0) {
+            lines.push(
+              "Batches: " +
+                (progress.processedBatches || 0) +
+                " / " +
+                progress.batchCount
+            );
+          }
           if (progress.currentStep) {
             lines.push("Step: " + progress.currentStep);
           }
@@ -715,23 +891,7 @@ export class ExplanationPanel implements vscode.Disposable {
         renderDetectedType(payload.currentGranularity);
         renderPreprocess(payload.preprocessProgress);
 
-        wordbook.innerHTML = "";
-        if ((payload.wordbookEntries || []).length) {
-          for (const entry of payload.wordbookEntries) {
-            wordbook.appendChild(
-              renderListItem(
-                entry.term,
-                entry.summary,
-                entry.category +
-                  " | line " +
-                  entry.sourceLine +
-                  (entry.isPlaceholder ? " | pending" : "")
-              )
-            );
-          }
-        } else {
-          renderEmpty(wordbook, "Run preprocessing to build the current file wordbook.");
-        }
+        renderWordbook(payload.wordbookEntries || []);
 
         sections.innerHTML = "";
         if (explanation?.sections?.length) {

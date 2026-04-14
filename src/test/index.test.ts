@@ -9,6 +9,7 @@ import {
   getPreprocessTargetSelectionCount
 } from "../analysis/preprocess";
 import { extractGlossaryEntries } from "../analysis/glossary";
+import { attachWordbookScopePaths } from "../analysis/wordbook";
 import {
   buildFileOverviewSummary,
   createWorkspaceFileSummary,
@@ -62,6 +63,72 @@ test("extractGlossaryEntries includes python variables and label strings", () =>
   assert.ok(glossaryEntries.some((entry) => entry.term === "feature_map"));
   assert.ok(glossaryEntries.some((entry) => entry.term === "hidden_size"));
   assert.ok(glossaryEntries.some((entry) => entry.term === "PCA" && entry.category === "label"));
+});
+
+test("extractGlossaryEntries includes python member function references", () => {
+  const sourceCode = [
+    "class SpectralNet:",
+    "    def squeeze(self, x):",
+    "        return x",
+    "",
+    "    def forward(self, x):",
+    "        return self.squeeze(x)"
+  ].join("\n");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "python");
+
+  assert.ok(glossaryEntries.some((entry) => entry.term === "squeeze" && entry.category === "function"));
+  assert.ok(glossaryEntries.some((entry) => entry.term === "forward" && entry.category === "function"));
+});
+
+test("attachWordbookScopePaths groups entries by class and function scope", () => {
+  const sourceCode = [
+    "class SpectralNet:",
+    "    def __init__(self):",
+    "        self.hidden_size = 128",
+    "",
+    "    def squeeze(self, x):",
+    "        return x",
+    "",
+    "    def forward(self, x):",
+    "        return self.squeeze(x)",
+    "",
+    "def build_model():",
+    "    return SpectralNet()"
+  ].join("\n");
+  const entries = attachWordbookScopePaths(
+    [
+      {
+        term: "hidden_size",
+        normalizedTerm: "hidden_size",
+        category: "variable",
+        sourceLine: 3,
+        summary: "hidden size",
+        generatedAt: new Date().toISOString()
+      },
+      {
+        term: "squeeze",
+        normalizedTerm: "squeeze",
+        category: "function",
+        sourceLine: 5,
+        summary: "squeeze method",
+        generatedAt: new Date().toISOString()
+      },
+      {
+        term: "build_model",
+        normalizedTerm: "build_model",
+        category: "function",
+        sourceLine: 11,
+        summary: "build model",
+        generatedAt: new Date().toISOString()
+      }
+    ],
+    sourceCode,
+    "python"
+  );
+
+  assert.deepEqual(entries[0].scopePath, ["class SpectralNet", "function __init__"]);
+  assert.deepEqual(entries[1].scopePath, ["class SpectralNet", "function squeeze"]);
+  assert.deepEqual(entries[2].scopePath, ["function build_model"]);
 });
 
 test("inferGranularity distinguishes token, function, and block", () => {
@@ -404,7 +471,11 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
     }
   };
 
-  const progressSnapshots: Array<{ batchCount: number; processedBatches?: number }> = [];
+  const progressSnapshots: Array<{
+    batchCount: number;
+    processedBatches?: number;
+    currentStep?: string;
+  }> = [];
   const result = await buildSymbolPreprocessCache({
     editorText: sourceCode,
     languageId: "typescript",
@@ -438,7 +509,8 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
     onProgress: (progress: PreprocessProgress) => {
       progressSnapshots.push({
         batchCount: progress.batchCount,
-        processedBatches: progress.processedBatches
+        processedBatches: progress.processedBatches,
+        currentStep: progress.currentStep
       });
     }
   });
@@ -446,6 +518,12 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
   assert.ok(result);
   assert.equal(preprocessBatchSizes.length, 3);
   assert.deepEqual(preprocessBatchSizes, [20, 20, 6]);
+  assert.ok(
+    progressSnapshots.some(
+      (snapshot) =>
+        snapshot.currentStep === "Selecting wordbook terms" && snapshot.batchCount === 0
+    )
+  );
   assert.ok(progressSnapshots.some((snapshot) => snapshot.batchCount === 3));
   assert.ok(progressSnapshots.some((snapshot) => snapshot.processedBatches === 3));
   await fs.rm(workspaceRoot, { recursive: true, force: true });

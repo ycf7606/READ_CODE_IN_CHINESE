@@ -174,6 +174,16 @@ function addPythonAssignmentEntries(
   }
 }
 
+function addMemberFunctionEntries(
+  map: Map<string, GlossaryEntry>,
+  line: string,
+  lineNumber: number
+): void {
+  for (const match of line.matchAll(/\b(?:this|self|cls)\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
+    addEntry(map, match[1], "function", lineNumber);
+  }
+}
+
 export function extractGlossaryEntries(
   sourceCode: string,
   languageId: string,
@@ -196,6 +206,8 @@ export function extractGlossaryEntries(
     for (const match of line.matchAll(/\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
       addEntry(glossaryMap, match[1], "function", lineNumber);
     }
+
+    addMemberFunctionEntries(glossaryMap, line, lineNumber);
 
     for (const match of line.matchAll(
       /\b(?:class|interface|type|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/g

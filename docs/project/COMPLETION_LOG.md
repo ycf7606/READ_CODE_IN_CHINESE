@@ -803,3 +803,61 @@
   - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-18.md`
 - Verification:
   - Manual review of the updated context files
+
+### S19-01 Hide batch counters during candidate selection
+
+- Stage: 19
+- Result: Stopped rendering misleading `0 / N` batch counters during candidate-pool preparation and wordbook term selection, while keeping batch progress visible for real preprocessing work.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\knowledge\symbolPreprocessBuilder.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S19-02 Add class-member function extraction
+
+- Stage: 19
+- Result: Added extraction for member-function references such as `self.xxx(...)`, `cls.xxx(...)`, and `this.xxx(...)` so more class-local methods can enter the wordbook candidate pool.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\analysis\glossary.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\test\index.test.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S19-03 Add scope-based wordbook tree rendering
+
+- Stage: 19
+- Result: Annotated visible wordbook entries with class/function scope paths from the active file and replaced the flat wordbook list with a compact collapsible tree.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\analysis\wordbook.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\contracts.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S19-04 Add regression coverage for scope grouping and progress semantics
+
+- Stage: 19
+- Result: Added tests for Python member-function extraction, wordbook scope-path annotation, and selection-phase preprocess progress batch semantics.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\test\index.test.ts`
+- Verification:
+  - `npm.cmd test`
+
+### S19-05 Publish the Stage 19 summary
+
+- Stage: 19
+- Result: Updated README, architecture docs, changelog, workboard, and created the Stage 19 summary for future context loading.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\COMPLETION_LOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-19.md`
+- Verification:
+  - Manual review of the updated context files

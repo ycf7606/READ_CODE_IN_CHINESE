@@ -2,6 +2,9 @@
 
 ## Unreleased - 2026-04-14
 
+- Hid batch counters during candidate-pool preparation and selection so the panel no longer shows misleading `0 / N` batch progress before real preprocessing starts
+- Added class-member function extraction for `self.xxx(...)`, `cls.xxx(...)`, and `this.xxx(...)` references so more file-local methods enter the wordbook candidate pool
+- Added scope-path annotation for wordbook entries and reorganized the wordbook tab into a compact collapsible tree grouped by classes and functions
 - Fixed the wordbook tab to render the full current-file cache instead of only the first 12 entries
 - Stopped partial preprocess cache writes from storing synthetic placeholder entries as if they were completed results
 - Clarified preprocess progress so the UI now separates candidate pool size, selected target count, cached entry count, and processed batches

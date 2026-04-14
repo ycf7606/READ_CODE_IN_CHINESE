@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 18
-- Latest summary: `docs/project/summaries/2026-04-14-stage-18.md`
+- Latest completed milestone: Stage 19
+- Latest summary: `docs/project/summaries/2026-04-14-stage-19.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -43,6 +43,7 @@ Every future work session must read these files in order before making changes:
 | 16 | API-driven preprocess selection | Completed | Remote candidate selection, 5-step preprocess progress, and resilient local fallback |
 | 17 | Focus-safe wordbook chunking and UI cleanup | Completed | Stable panel monitoring, chunked fast preprocessing, retention tuning, and cleaner split-page UI |
 | 18 | Wordbook cache integrity and progress clarity | Completed | Full wordbook rendering, placeholder-safe cache writes, legacy cache cleanup, and clearer progress counts |
+| 19 | Wordbook scope tree and member coverage | Completed | Selection-phase progress cleanup, class-member function extraction, and collapsible scope-based wordbook UI |
 
 ## Completed Tasks
 
@@ -139,6 +140,11 @@ Every future work session must read these files in order before making changes:
 - [x] S18-03 Clarify preprocess progress semantics by separating candidate pool, selected target, cached entries, and processed batches.
 - [x] S18-04 Sanitize legacy placeholder wordbook cache entries when reopening a file.
 - [x] S18-05 Produce the Stage 18 summary file.
+- [x] S19-01 Stop showing batch counters during candidate selection and preparation.
+- [x] S19-02 Include class-member function references such as `self.xxx(...)` in the wordbook candidate pool.
+- [x] S19-03 Group visible wordbook entries into a compact collapsible class/function tree.
+- [x] S19-04 Add regression coverage for member extraction, scope annotation, and selection-phase batch semantics.
+- [x] S19-05 Produce the Stage 19 summary file.
 
 ## Current Todo
 
@@ -165,6 +171,7 @@ Every future work session must read these files in order before making changes:
 - A Stage 16 update moved remote file-wordbook selection away from fixed local term lists and into a dedicated provider pass over the raw candidate pool, while preserving local fallback behavior.
 - A Stage 17 update stabilized monitoring when the user interacts with the panel, widened default wordbook retention, and switched wordbook preprocessing to prioritized fast chunks with a separate wordbook page in the UI.
 - A Stage 18 update fixed wordbook cache integrity by preventing placeholder entries from masquerading as completed results, showing the full wordbook tab, cleaning legacy caches on load, and clarifying progress counts.
+- A Stage 19 update hid misleading selection-phase batch counters, added class-member method extraction, and turned the wordbook page into a compact collapsible scope tree.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

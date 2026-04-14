@@ -3,6 +3,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { buildPreprocessCandidatePool } from "./analysis/preprocess";
 import { extractGlossaryEntries, mergeGlossaryWithUserOverrides } from "./analysis/glossary";
+import { attachWordbookScopePaths } from "./analysis/wordbook";
 import {
   createWorkspaceFileSummary,
   createWorkspaceIndexMarkdown,
@@ -1320,7 +1321,11 @@ export function activate(context: vscode.ExtensionContext): void {
       return [];
     }
 
-    return sessionState.wordbookEntries;
+    return attachWordbookScopePaths(
+      sessionState.wordbookEntries,
+      editor.document.getText(),
+      editor.document.languageId
+    );
   }
 
   async function refreshWordbookForActiveEditor(): Promise<void> {

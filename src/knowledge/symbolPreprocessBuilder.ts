@@ -349,12 +349,14 @@ async function selectCandidatesForPreprocess(
   );
 
   options.onProgress?.(
-      createProgress(candidatePool.length, targetSelectionCount, 0, sourceHash, options.relativeFilePath, {
-        status: "running",
-        completedSteps: 2,
-        currentStep: "Selecting wordbook terms",
-        message: `Selecting ${targetSelectionCount} wordbook terms from ${candidatePool.length} candidates.`
-      })
+    createProgress(candidatePool.length, targetSelectionCount, 0, sourceHash, options.relativeFilePath, {
+      status: "running",
+      completedSteps: 2,
+      batchCount: 0,
+      processedBatches: 0,
+      currentStep: "Selecting wordbook terms",
+      message: `Selecting ${targetSelectionCount} wordbook terms from ${candidatePool.length} candidates.`
+    })
   );
 
   if (options.provider.selectPreprocessCandidates) {
@@ -400,6 +402,8 @@ async function selectCandidatesForPreprocess(
           {
             status: "running",
             completedSteps: 2,
+            batchCount: 0,
+            processedBatches: 0,
             currentStep: "Selecting wordbook terms",
             message: `Selected ${selectedCandidates.length} wordbook terms from ${candidatePool.length} candidates.`
           }
@@ -436,6 +440,8 @@ async function selectCandidatesForPreprocess(
       {
         status: "running",
         completedSteps: 2,
+        batchCount: 0,
+        processedBatches: 0,
         currentStep: "Selecting wordbook terms",
         message: `Used local fallback to select ${fallbackCandidates.length} wordbook terms from ${candidatePool.length} candidates.`
       }

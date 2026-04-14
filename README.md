@@ -28,7 +28,7 @@
 ## Current Status
 
 - Stage 0-7 completed
-- Stage 18 wordbook cache integrity and progress clarity are complete, so file preprocessing now shows accurate counts, full wordbook results, and repairs legacy placeholder caches on load
+- Stage 19 wordbook scope grouping and member-function coverage are complete, so the wordbook now renders as a collapsible class/function tree and includes more class-local methods
 - Tracking board: `docs/project/WORKBOARD.md`
 
 ## Main Commands
@@ -64,6 +64,7 @@
   - settings button that opens the configuration panel
   - preprocess progress with separate candidate-pool, selected-target, cached-entry, and batch counts
   - visible full-file wordbook for the current file preprocess cache
+  - compact collapsible wordbook tree grouped by classes, functions, and module scope
   - glossary snapshot
   - workspace index preview
   - follow-up chat
@@ -188,9 +189,11 @@ When the remote provider is enabled, the extension can preprocess the active fil
 - Wordbook preprocess prompts now force a fast remote path with low reasoning effort and shorter batch outputs
 - Preprocess prompt shaping ignores explanation section preferences such as `summary`, `usage`, or `risk`
 - Local heuristics remain only as a fallback when the provider cannot perform the selection pass
-- The explanation panel shows 5-step preprocess progress with distinct candidate-pool, selected-target, cached-entry, and batch counts
+- The explanation panel shows 5-step preprocess progress with distinct candidate-pool, selected-target, cached-entry, and batch counts, and it does not display batch counters during the earlier selection phase
 - The explanation panel shows the full file wordbook sourced from the current file preprocess cache instead of a short preview slice
 - Legacy placeholder cache entries from older builds are removed automatically when the file is reopened, so stale partial caches do not appear complete
+- Member function references such as `self.squeeze(...)`, `cls.build(...)`, and `this.load(...)` can now enter the wordbook candidate pool as file-local functions
+- Visible wordbook entries are annotated with scope paths from the active file and rendered as a collapsible class/function tree instead of one flat list
 - Single-symbol explanations first check this file-level preprocess cache before hitting the model again
 - If the user changes selection while an explanation request is still running, the older explanation is aborted and the newest selection wins
 - Background wordbook preprocessing keeps running while the user continues reading the same file

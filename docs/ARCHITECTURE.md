@@ -28,6 +28,7 @@ The extension is designed to make source code easier to read by combining:
 ### `src/analysis/`
 
 - `glossary.ts`: extracts symbols, Python assignments, and label-like string terms, then generates stable term meanings
+- `wordbook.ts`: infers class/function scope ranges from the active file and annotates visible wordbook entries with scope paths for tree rendering
 - `summary.ts`: infers granularity, builds local summaries, and suggests follow-up questions
 
 ### `src/providers/`
@@ -57,7 +58,7 @@ The extension is designed to make source code easier to read by combining:
 ### `src/ui/`
 
 - `glossaryTreeProvider.ts`: Explorer sidebar glossary
-- `explanationPanel.ts`: explanation tab, separate wordbook tab, selection metadata, preprocess progress with clearer count semantics, glossary snapshot, workspace preview, and follow-up chat
+- `explanationPanel.ts`: explanation tab, separate wordbook tab, selection metadata, preprocess progress with clearer count semantics, compact wordbook tree rendering, glossary snapshot, workspace preview, and follow-up chat
 - `settingsPanel.ts`: first-run onboarding, provider controls, preprocess trigger, occupation presets, provider-backed prompt generation, and editable prompt / hyperparameter controls
 
 ## Data Flow
@@ -80,9 +81,10 @@ The extension is designed to make source code easier to read by combining:
 16. Partial preprocess cache writes store only actual generated entries, and legacy placeholder entries are ignored when resuming or reopening a file
 17. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins, but background wordbook preprocessing is not canceled for ordinary same-file reading
 18. Successful remote token explanations can still be written into the token knowledge cache
-19. Panel, glossary UI, wordbook tab, preprocess progress, and status metadata update with separate candidate-pool, selected-target, cached-entry, and batch counts
-20. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
-21. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
+19. Visible wordbook entries are annotated with scope paths from the active file so the wordbook tab can group them by classes and functions
+20. Panel, glossary UI, wordbook tab, preprocess progress, and status metadata update with separate candidate-pool, selected-target, cached-entry, and batch counts, while early selection steps omit misleading batch counters
+21. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
+22. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 

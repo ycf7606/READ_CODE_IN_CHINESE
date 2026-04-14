@@ -219,6 +219,7 @@ export interface PreprocessedSymbolEntry {
   summary: string;
   generatedAt: string;
   isPlaceholder?: boolean;
+  scopePath?: string[];
 }
 
 export interface PreprocessedSymbolCacheFile {
