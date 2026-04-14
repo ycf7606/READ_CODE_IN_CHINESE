@@ -14,18 +14,10 @@ const CATEGORY_WEIGHT: Record<PreprocessedSymbolCategory, number> = {
   label: 20
 };
 
-const PROFESSIONAL_BASE_LIMIT: Record<ProfessionalLevel, number> = {
-  beginner: 24,
-  intermediate: 12,
-  expert: 6
-};
-
-const OCCUPATION_LIMIT_DELTA: Record<Occupation, number> = {
-  student: 6,
-  developer: 0,
-  "data-scientist": 4,
-  researcher: 3,
-  maintainer: 2
+const RETENTION_RATIO: Record<ProfessionalLevel, number> = {
+  beginner: 1,
+  intermediate: 0.85,
+  expert: 0.7
 };
 
 const COMMON_FUNCTION_TERMS = new Set([
@@ -85,18 +77,12 @@ export function buildPreprocessCandidatePool(
     .map((entry) => ({
       term: entry.term,
       normalizedTerm: entry.normalizedTerm,
-      category: entry.category as PreprocessedSymbolCategory,
+      category: entry.category,
       sourceLine: entry.sourceLine ?? 0,
       references: entry.references,
       score: scoreCandidate(entry)
     }))
-    .sort((left, right) => {
-      return (
-        right.score - left.score ||
-        left.sourceLine - right.sourceLine ||
-        left.term.localeCompare(right.term)
-      );
-    });
+    .sort(compareCandidateOrder);
 }
 
 export function selectPreprocessCandidatesFromPool(
@@ -104,11 +90,15 @@ export function selectPreprocessCandidatesFromPool(
   professionalLevel: ProfessionalLevel,
   occupation: Occupation
 ): PreprocessedSymbolCandidate[] {
-  const limit = getPreprocessCandidateLimit(professionalLevel, occupation);
+  const targetCount = getPreprocessTargetSelectionCount(
+    candidatePool.length,
+    professionalLevel
+  );
 
-  return candidatePool
-    .filter((entry) => keepCandidateForAudience(entry, professionalLevel, occupation))
-    .slice(0, limit);
+  return rankPreprocessCandidatesForAudience(candidatePool, professionalLevel, occupation).slice(
+    0,
+    targetCount
+  );
 }
 
 export function buildPreprocessCandidates(
@@ -123,14 +113,39 @@ export function buildPreprocessCandidates(
   );
 }
 
-export function getPreprocessCandidateLimit(
+export function getPreprocessRetentionRatio(
+  professionalLevel: ProfessionalLevel
+): number {
+  return RETENTION_RATIO[professionalLevel];
+}
+
+export function getPreprocessTargetSelectionCount(
+  candidateCount: number,
+  professionalLevel: ProfessionalLevel
+): number {
+  if (candidateCount <= 0) {
+    return 0;
+  }
+
+  if (professionalLevel === "beginner") {
+    return candidateCount;
+  }
+
+  return Math.min(candidateCount, Math.max(1, Math.ceil(candidateCount * RETENTION_RATIO[professionalLevel])));
+}
+
+export function rankPreprocessCandidatesForAudience(
+  candidatePool: PreprocessedSymbolCandidate[],
   professionalLevel: ProfessionalLevel,
   occupation: Occupation
-): number {
-  return Math.max(
-    6,
-    PROFESSIONAL_BASE_LIMIT[professionalLevel] + OCCUPATION_LIMIT_DELTA[occupation]
-  );
+): PreprocessedSymbolCandidate[] {
+  return [...candidatePool].sort((left, right) => {
+    const scoreDifference =
+      scoreCandidateForAudience(right, professionalLevel, occupation) -
+      scoreCandidateForAudience(left, professionalLevel, occupation);
+
+    return scoreDifference || compareCandidateOrder(left, right);
+  });
 }
 
 function isPreprocessCategory(
@@ -145,89 +160,38 @@ function isPreprocessCategory(
   );
 }
 
-function keepCandidateForAudience(
+function scoreCandidateForAudience(
   entry: PreprocessedSymbolCandidate,
   professionalLevel: ProfessionalLevel,
   occupation: Occupation
-): boolean {
-  if (isTooCommonForAudience(entry, professionalLevel, occupation)) {
-    return false;
-  }
-
-  if (entry.category === "function" || entry.category === "class" || entry.category === "type") {
-    return true;
-  }
-
-  if (entry.category === "label") {
-    if (professionalLevel === "beginner") {
-      return entry.term.length > 1;
-    }
-
-    if (professionalLevel === "intermediate") {
-      return entry.references > 0 || /[A-Z_-]/.test(entry.term);
-    }
-
-    return entry.references > 1 || /[A-Z_-]/.test(entry.term);
-  }
-
+): number {
   if (professionalLevel === "beginner") {
-    return entry.term.length > 1;
+    return entry.score;
   }
 
-  if (professionalLevel === "intermediate") {
-    return entry.references > 1 || /[A-Z_]/.test(entry.term) || entry.term.length > 3;
-  }
+  let adjustedScore = entry.score;
+  const commonPenaltyMultiplier = occupation === "student" ? 0.6 : 1;
 
-  return entry.references > 1 && (/[A-Z_]/.test(entry.term) || entry.term.length > 4);
-}
-
-function isTooCommonForAudience(
-  entry: PreprocessedSymbolCandidate,
-  professionalLevel: ProfessionalLevel,
-  occupation: Occupation
-): boolean {
-  const normalizedTerm = entry.normalizedTerm;
-
-  if (professionalLevel === "beginner") {
-    return false;
-  }
-
-  if (
-    entry.category === "function" &&
-    COMMON_FUNCTION_TERMS.has(normalizedTerm) &&
-    professionalLevel === "intermediate" &&
-    entry.references <= 2
-  ) {
-    return true;
+  if (entry.category === "function" && COMMON_FUNCTION_TERMS.has(entry.normalizedTerm)) {
+    adjustedScore -= professionalLevel === "intermediate" ? 18 * commonPenaltyMultiplier : 28;
   }
 
   if (
     (entry.category === "variable" || entry.category === "label") &&
-    COMMON_VARIABLE_TERMS.has(normalizedTerm) &&
-    professionalLevel === "intermediate" &&
-    entry.references <= 2 &&
-    occupation !== "student"
+    COMMON_VARIABLE_TERMS.has(entry.normalizedTerm)
   ) {
-    return true;
+    adjustedScore -= professionalLevel === "intermediate" ? 16 * commonPenaltyMultiplier : 24;
   }
 
-  if (
-    entry.category === "function" &&
-    COMMON_FUNCTION_TERMS.has(normalizedTerm) &&
-    professionalLevel === "expert"
-  ) {
-    return true;
+  if (entry.term.length <= 2) {
+    adjustedScore -= professionalLevel === "intermediate" ? 10 : 16;
   }
 
-  if (
-    (entry.category === "variable" || entry.category === "label") &&
-    COMMON_VARIABLE_TERMS.has(normalizedTerm) &&
-    professionalLevel === "expert"
-  ) {
-    return true;
+  if (entry.category === "label" && !/[A-Z_-]/.test(entry.term)) {
+    adjustedScore -= professionalLevel === "intermediate" ? 6 : 10;
   }
 
-  return false;
+  return adjustedScore;
 }
 
 function scoreCandidate(
@@ -238,5 +202,22 @@ function scoreCandidate(
   const labelShapeWeight = entry.category === "label" && /[-_]/.test(entry.term) ? 4 : 0;
   const sourceLineWeight = entry.sourceLine ? Math.max(0, 12 - Math.min(entry.sourceLine, 12)) : 0;
 
-  return categoryWeight + entry.references * 6 + nameComplexityWeight + labelShapeWeight + sourceLineWeight;
+  return (
+    categoryWeight +
+    entry.references * 6 +
+    nameComplexityWeight +
+    labelShapeWeight +
+    sourceLineWeight
+  );
+}
+
+function compareCandidateOrder(
+  left: PreprocessedSymbolCandidate,
+  right: PreprocessedSymbolCandidate
+): number {
+  return (
+    right.score - left.score ||
+    left.sourceLine - right.sourceLine ||
+    left.term.localeCompare(right.term)
+  );
 }

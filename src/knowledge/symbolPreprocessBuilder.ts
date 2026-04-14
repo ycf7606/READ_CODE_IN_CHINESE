@@ -12,6 +12,9 @@
 } from "../contracts";
 import {
   buildPreprocessCandidatePool,
+  getPreprocessRetentionRatio,
+  getPreprocessTargetSelectionCount,
+  rankPreprocessCandidatesForAudience,
   selectPreprocessCandidatesFromPool
 } from "../analysis/preprocess";
 import { ExtensionLogger } from "../logging/logger";
@@ -20,6 +23,8 @@ import { ExplanationProvider } from "../providers/providerTypes";
 import { WorkspaceStore } from "../storage/workspaceStore";
 import { createContentHash } from "../utils/hash";
 import { PreprocessStore } from "./preprocessStore";
+
+const PREPROCESS_CHUNK_SIZE = 20;
 
 export interface BuildSymbolPreprocessOptions {
   editorText: string;
@@ -34,6 +39,8 @@ export interface BuildSymbolPreprocessOptions {
   logger?: ExtensionLogger;
   signal?: AbortSignal;
   onProgress?: (progress: PreprocessProgress) => void;
+  onCacheUpdate?: (cacheFile: PreprocessedSymbolCacheFile) => void;
+  getPriorityScore?: (sourceLine: number) => number;
 }
 
 export interface SymbolPreprocessResult {
@@ -86,44 +93,32 @@ export async function buildSymbolPreprocessCache(
     options.candidatePool ?? buildPreprocessCandidatePool(options.glossaryEntries);
 
   options.onProgress?.(
-    createProgress("running", candidatePool.length, 0, sourceHash, options.relativeFilePath, {
+    createProgress(candidatePool.length, 0, sourceHash, options.relativeFilePath, {
+      status: "running",
       completedSteps: 1,
       currentStep: "Preparing candidate pool",
       message: `Prepared ${candidatePool.length} preprocessable symbols for this file.`
     })
   );
 
+  const selectedCandidates = await selectCandidatesForPreprocess(
+    options,
+    candidatePool,
+    sourceHash
+  );
   const existingCache = await preprocessStore.read(options.relativeFilePath);
+  const selectedCandidateTerms = new Set(
+    selectedCandidates.map((candidate) => candidate.normalizedTerm)
+  );
+  const cachedEntries =
+    existingCache && existingCache.sourceHash === sourceHash
+      ? existingCache.entries.filter((entry) => selectedCandidateTerms.has(entry.normalizedTerm))
+      : [];
+  const missingCandidates = selectedCandidates.filter(
+    (candidate) => !cachedEntries.some((entry) => entry.normalizedTerm === candidate.normalizedTerm)
+  );
 
-  if (existingCache && existingCache.sourceHash === sourceHash) {
-    const cachedCandidates = matchCandidatesToEntries(candidatePool, existingCache.entries);
-
-    options.onProgress?.(
-      createProgress(
-        "completed",
-        cachedCandidates.length,
-        existingCache.entries.length,
-        sourceHash,
-        options.relativeFilePath,
-        {
-          completedAt: new Date().toISOString(),
-          completedSteps: 5,
-          currentStep: "Completed",
-          message: `Loaded ${existingCache.entries.length} cached wordbook entries.`
-        }
-      )
-    );
-
-    return {
-      cacheFile: existingCache,
-      candidates: cachedCandidates,
-      source: "cache"
-    };
-  }
-
-  const candidates = await selectCandidatesForPreprocess(options, candidatePool, sourceHash);
-
-  if (candidates.length === 0) {
+  if (selectedCandidates.length === 0) {
     const emptyCache: PreprocessedSymbolCacheFile = {
       languageId: options.languageId,
       relativeFilePath: options.relativeFilePath,
@@ -132,9 +127,10 @@ export async function buildSymbolPreprocessCache(
       entries: []
     };
     await preprocessStore.write(options.relativeFilePath, emptyCache);
+    options.onCacheUpdate?.(emptyCache);
     options.onProgress?.(
-      createProgress("completed", 0, 0, sourceHash, options.relativeFilePath, {
-        completedAt: new Date().toISOString(),
+      createProgress(0, 0, sourceHash, options.relativeFilePath, {
+        status: "completed",
         completedSteps: 5,
         currentStep: "Completed",
         message: "No file-local symbols were selected for the current audience profile."
@@ -148,96 +144,176 @@ export async function buildSymbolPreprocessCache(
     };
   }
 
-  options.onProgress?.(
-    createProgress("running", candidates.length, 0, sourceHash, options.relativeFilePath, {
-      completedSteps: 3,
-      currentStep: "Sending batch request",
-      message: `Selected ${candidates.length} wordbook terms and started 1 batch request.`
-    })
-  );
+  if (missingCandidates.length === 0) {
+    const normalizedCache = buildCacheFile(
+      options,
+      sourceHash,
+      normalizePreprocessEntries(selectedCandidates, cachedEntries)
+    );
 
-  const request: SymbolPreprocessRequest = {
-    requestId: createContentHash(
-      [
-        "symbol-preprocess",
-        options.languageId,
-        options.relativeFilePath,
+    if (
+      !existingCache ||
+      existingCache.sourceHash !== sourceHash ||
+      existingCache.entries.length !== normalizedCache.entries.length
+    ) {
+      await preprocessStore.write(options.relativeFilePath, normalizedCache);
+      options.onCacheUpdate?.(normalizedCache);
+    }
+
+    options.onProgress?.(
+      createProgress(
+        selectedCandidates.length,
+        normalizedCache.entries.length,
         sourceHash,
-        candidates.map((candidate) => candidate.term).join(",")
-      ].join(":")
-    ),
-    languageId: options.languageId,
-    filePath: options.filePath,
-    relativeFilePath: options.relativeFilePath,
-    professionalLevel: options.settings.professionalLevel,
-    occupation: options.settings.occupation,
-    sourceCode: options.editorText,
-    candidates,
-    userGoal: options.settings.userGoal,
-    customInstructions: generatePreprocessAudiencePrompt({
-      occupation: options.settings.occupation,
-      professionalLevel: options.settings.professionalLevel,
-      detailLevel: options.settings.detailLevel,
-      userGoal: options.settings.userGoal
-    })
-  };
+        options.relativeFilePath,
+        {
+          status: "completed",
+          completedSteps: 5,
+          batchCount: Math.max(1, Math.ceil(selectedCandidates.length / PREPROCESS_CHUNK_SIZE)),
+          processedBatches: Math.max(1, Math.ceil(selectedCandidates.length / PREPROCESS_CHUNK_SIZE)),
+          currentStep: "Completed",
+          message: `Loaded ${normalizedCache.entries.length} cached wordbook entries.`
+        }
+      )
+    );
 
-  const response = await options.provider.preprocessSymbols(request, {
-    signal: options.signal
-  });
-  const normalizedEntries = normalizePreprocessEntries(candidates, response.entries);
-  const cacheFile: PreprocessedSymbolCacheFile = {
-    languageId: options.languageId,
-    relativeFilePath: options.relativeFilePath,
+    return {
+      cacheFile: normalizedCache,
+      candidates: selectedCandidates,
+      source: "cache"
+    };
+  }
+
+  const totalBatchCount = Math.max(1, Math.ceil(missingCandidates.length / PREPROCESS_CHUNK_SIZE));
+  const mergedEntries = new Map(cachedEntries.map((entry) => [entry.normalizedTerm, entry]));
+  let remainingCandidates = [...missingCandidates];
+  let processedBatches = 0;
+  let responseSource = options.provider.id;
+
+  while (remainingCandidates.length > 0) {
+    const nextChunk = takeNextPreprocessChunk(
+      remainingCandidates,
+      options.getPriorityScore,
+      selectedCandidates
+    );
+
+    options.onProgress?.(
+      createProgress(
+        selectedCandidates.length,
+        mergedEntries.size,
+        sourceHash,
+        options.relativeFilePath,
+        {
+          status: "running",
+          completedSteps: 3,
+          batchCount: totalBatchCount,
+          processedBatches,
+          currentStep: "Preprocessing wordbook chunk",
+          message: `Processing batch ${processedBatches + 1} / ${totalBatchCount} with ${nextChunk.length} terms.`
+        }
+      )
+    );
+
+    const response = await options.provider.preprocessSymbols(
+      buildChunkRequest(options, nextChunk, sourceHash),
+      {
+        signal: options.signal
+      }
+    );
+    responseSource = response.source;
+
+    const normalizedChunkEntries = normalizePreprocessEntries(nextChunk, response.entries);
+
+    for (const entry of normalizedChunkEntries) {
+      mergedEntries.set(entry.normalizedTerm, entry);
+    }
+
+    remainingCandidates = remainingCandidates.filter(
+      (candidate) => !nextChunk.some((chunkEntry) => chunkEntry.normalizedTerm === candidate.normalizedTerm)
+    );
+    processedBatches += 1;
+
+    const partialCache = buildCacheFile(
+      options,
+      sourceHash,
+      normalizePreprocessEntries(selectedCandidates, Array.from(mergedEntries.values()))
+    );
+    await preprocessStore.write(options.relativeFilePath, partialCache);
+    options.onCacheUpdate?.(partialCache);
+    options.onProgress?.(
+      createProgress(
+        selectedCandidates.length,
+        partialCache.entries.length,
+        sourceHash,
+        options.relativeFilePath,
+        {
+          status: "running",
+          completedSteps: 3,
+          batchCount: totalBatchCount,
+          processedBatches,
+          currentStep: "Preprocessing wordbook chunk",
+          message: `Completed batch ${processedBatches} / ${totalBatchCount}. Cached ${partialCache.entries.length} entries.`
+        }
+      )
+    );
+  }
+
+  const cacheFile = buildCacheFile(
+    options,
     sourceHash,
-    generatedAt: new Date().toISOString(),
-    entries: normalizedEntries
-  };
+    normalizePreprocessEntries(selectedCandidates, Array.from(mergedEntries.values()))
+  );
 
   options.onProgress?.(
     createProgress(
-      "running",
-      candidates.length,
-      normalizedEntries.length,
+      selectedCandidates.length,
+      cacheFile.entries.length,
       sourceHash,
       options.relativeFilePath,
       {
+        status: "running",
         completedSteps: 4,
-        currentStep: "Saving cache",
-        message: `Saving ${normalizedEntries.length} wordbook entries.`
+        batchCount: totalBatchCount,
+        processedBatches,
+        currentStep: "Finalizing cache",
+        message: `Finalizing ${cacheFile.entries.length} wordbook entries.`
       }
     )
   );
 
   await preprocessStore.write(options.relativeFilePath, cacheFile);
+  options.onCacheUpdate?.(cacheFile);
   options.logger?.info("Symbol preprocessing completed", {
     relativeFilePath: options.relativeFilePath,
     languageId: options.languageId,
     candidatePoolSize: candidatePool.length,
-    symbolCount: normalizedEntries.length,
-    source: response.source
+    selectedCount: selectedCandidates.length,
+    batchCount: totalBatchCount,
+    symbolCount: cacheFile.entries.length,
+    source: options.provider.id
   });
 
   options.onProgress?.(
     createProgress(
-      "completed",
-      candidates.length,
-      normalizedEntries.length,
+      selectedCandidates.length,
+      cacheFile.entries.length,
       sourceHash,
       options.relativeFilePath,
       {
-        completedAt: new Date().toISOString(),
+        status: "completed",
         completedSteps: 5,
+        batchCount: totalBatchCount,
+        processedBatches,
         currentStep: "Completed",
-        message: `Preprocessed ${normalizedEntries.length} wordbook entries.`
+        message: `Preprocessed ${cacheFile.entries.length} wordbook entries in ${totalBatchCount} batches.`
       }
     )
   );
 
   return {
     cacheFile,
-    candidates,
-    source: response.source
+    candidates: selectedCandidates,
+    source: responseSource
   };
 }
 
@@ -250,43 +326,66 @@ async function selectCandidatesForPreprocess(
     return [];
   }
 
+  const rankedCandidates = rankPreprocessCandidatesForAudience(
+    candidatePool,
+    options.settings.professionalLevel,
+    options.settings.occupation
+  );
+  const targetSelectionCount = getPreprocessTargetSelectionCount(
+    candidatePool.length,
+    options.settings.professionalLevel
+  );
+
   options.onProgress?.(
-    createProgress("running", candidatePool.length, 0, sourceHash, options.relativeFilePath, {
+    createProgress(candidatePool.length, 0, sourceHash, options.relativeFilePath, {
+      status: "running",
       completedSteps: 2,
       currentStep: "Selecting wordbook terms",
-      message: `Analyzing ${candidatePool.length} candidate symbols for this audience profile.`
+      message: `Selecting ${targetSelectionCount} wordbook terms from ${candidatePool.length} candidates.`
     })
   );
 
   if (options.provider.selectPreprocessCandidates) {
     try {
-      const request = buildSelectionRequest(options, candidatePool, sourceHash);
+      const request = buildSelectionRequest(
+        options,
+        candidatePool,
+        sourceHash,
+        targetSelectionCount
+      );
       const response = await options.provider.selectPreprocessCandidates(request, {
         signal: options.signal
       });
       const selectedTermSet = new Set(
         response.selectedTerms.map((term) => term.trim().toLowerCase()).filter(Boolean)
       );
-      const selectedCandidates = candidatePool.filter((candidate) =>
+      const remoteSelectedCandidates = candidatePool.filter((candidate) =>
         selectedTermSet.has(candidate.normalizedTerm)
+      );
+      const selectedCandidates = reconcileSelectedCandidates(
+        rankedCandidates,
+        remoteSelectedCandidates,
+        targetSelectionCount
       );
 
       options.logger?.info("Preprocess candidate selection completed", {
         relativeFilePath: options.relativeFilePath,
         providerSource: response.source,
         candidatePoolSize: candidatePool.length,
-        selectedCount: selectedCandidates.length,
+        targetSelectionCount,
+        remoteSelectedCount: remoteSelectedCandidates.length,
+        finalSelectedCount: selectedCandidates.length,
         note: response.note
       });
 
       options.onProgress?.(
         createProgress(
-          "running",
           selectedCandidates.length,
           0,
           sourceHash,
           options.relativeFilePath,
           {
+            status: "running",
             completedSteps: 2,
             currentStep: "Selecting wordbook terms",
             message: `Selected ${selectedCandidates.length} wordbook terms from ${candidatePool.length} candidates.`
@@ -316,12 +415,12 @@ async function selectCandidatesForPreprocess(
 
   options.onProgress?.(
     createProgress(
-      "running",
       fallbackCandidates.length,
       0,
       sourceHash,
       options.relativeFilePath,
       {
+        status: "running",
         completedSteps: 2,
         currentStep: "Selecting wordbook terms",
         message: `Used local fallback to select ${fallbackCandidates.length} wordbook terms from ${candidatePool.length} candidates.`
@@ -335,7 +434,8 @@ async function selectCandidatesForPreprocess(
 function buildSelectionRequest(
   options: BuildSymbolPreprocessOptions,
   candidatePool: PreprocessedSymbolCandidate[],
-  sourceHash: string
+  sourceHash: string,
+  targetSelectionCount: number
 ): PreprocessCandidateSelectionRequest {
   return {
     requestId: createContentHash(
@@ -346,6 +446,7 @@ function buildSelectionRequest(
         sourceHash,
         options.settings.professionalLevel,
         options.settings.occupation,
+        targetSelectionCount,
         candidatePool.map((candidate) => candidate.normalizedTerm).join(",")
       ].join(":")
     ),
@@ -356,13 +457,110 @@ function buildSelectionRequest(
     occupation: options.settings.occupation,
     sourceCode: options.editorText,
     candidatePool,
+    targetSelectionCount,
+    retentionRatio: getPreprocessRetentionRatio(options.settings.professionalLevel),
     userGoal: options.settings.userGoal,
     customInstructions: generatePreprocessAudiencePrompt({
       occupation: options.settings.occupation,
       professionalLevel: options.settings.professionalLevel,
-      detailLevel: options.settings.detailLevel,
+      detailLevel: "fast",
       userGoal: options.settings.userGoal
     })
+  };
+}
+
+function buildChunkRequest(
+  options: BuildSymbolPreprocessOptions,
+  candidates: PreprocessedSymbolCandidate[],
+  sourceHash: string
+): SymbolPreprocessRequest {
+  return {
+    requestId: createContentHash(
+      [
+        "symbol-preprocess",
+        options.languageId,
+        options.relativeFilePath,
+        sourceHash,
+        candidates.map((candidate) => candidate.term).join(",")
+      ].join(":")
+    ),
+    languageId: options.languageId,
+    filePath: options.filePath,
+    relativeFilePath: options.relativeFilePath,
+    professionalLevel: options.settings.professionalLevel,
+    occupation: options.settings.occupation,
+    sourceCode: options.editorText,
+    candidates,
+    userGoal: options.settings.userGoal,
+    customInstructions: generatePreprocessAudiencePrompt({
+      occupation: options.settings.occupation,
+      professionalLevel: options.settings.professionalLevel,
+      detailLevel: "fast",
+      userGoal: options.settings.userGoal
+    })
+  };
+}
+
+function reconcileSelectedCandidates(
+  rankedCandidates: PreprocessedSymbolCandidate[],
+  remoteSelectedCandidates: PreprocessedSymbolCandidate[],
+  targetSelectionCount: number
+): PreprocessedSymbolCandidate[] {
+  const remoteSelectedTermSet = new Set(
+    remoteSelectedCandidates.map((candidate) => candidate.normalizedTerm)
+  );
+  const selectedCandidates = rankedCandidates.filter((candidate) =>
+    remoteSelectedTermSet.has(candidate.normalizedTerm)
+  );
+
+  if (selectedCandidates.length >= targetSelectionCount) {
+    return selectedCandidates.slice(0, targetSelectionCount);
+  }
+
+  const missingCandidates = rankedCandidates.filter(
+    (candidate) => !remoteSelectedTermSet.has(candidate.normalizedTerm)
+  );
+
+  return [...selectedCandidates, ...missingCandidates].slice(0, targetSelectionCount);
+}
+
+function takeNextPreprocessChunk(
+  remainingCandidates: PreprocessedSymbolCandidate[],
+  getPriorityScore: BuildSymbolPreprocessOptions["getPriorityScore"],
+  selectedCandidates: PreprocessedSymbolCandidate[]
+): PreprocessedSymbolCandidate[] {
+  const orderMap = new Map(
+    selectedCandidates.map((candidate, index) => [candidate.normalizedTerm, index])
+  );
+
+  return [...remainingCandidates]
+    .sort((left, right) => {
+      const priorityDifference =
+        (getPriorityScore?.(right.sourceLine) ?? 0) - (getPriorityScore?.(left.sourceLine) ?? 0);
+
+      if (priorityDifference !== 0) {
+        return priorityDifference;
+      }
+
+      return (
+        (orderMap.get(left.normalizedTerm) ?? Number.MAX_SAFE_INTEGER) -
+        (orderMap.get(right.normalizedTerm) ?? Number.MAX_SAFE_INTEGER)
+      );
+    })
+    .slice(0, PREPROCESS_CHUNK_SIZE);
+}
+
+function buildCacheFile(
+  options: BuildSymbolPreprocessOptions,
+  sourceHash: string,
+  entries: PreprocessedSymbolEntry[]
+): PreprocessedSymbolCacheFile {
+  return {
+    languageId: options.languageId,
+    relativeFilePath: options.relativeFilePath,
+    sourceHash,
+    generatedAt: new Date().toISOString(),
+    entries
   };
 }
 
@@ -390,19 +588,6 @@ function normalizePreprocessEntries(
   });
 }
 
-function matchCandidatesToEntries(
-  candidatePool: PreprocessedSymbolCandidate[],
-  entries: PreprocessedSymbolEntry[]
-): PreprocessedSymbolCandidate[] {
-  const candidateMap = new Map(
-    candidatePool.map((candidate) => [candidate.normalizedTerm, candidate])
-  );
-
-  return entries
-    .map((entry) => candidateMap.get(entry.normalizedTerm))
-    .filter((candidate): candidate is PreprocessedSymbolCandidate => Boolean(candidate));
-}
-
 function toCategoryLabel(category: PreprocessedSymbolCandidate["category"]): string {
   switch (category) {
     case "function":
@@ -419,7 +604,6 @@ function toCategoryLabel(category: PreprocessedSymbolCandidate["category"]): str
 }
 
 function createProgress(
-  status: PreprocessProgress["status"],
   totalCandidates: number,
   processedCandidates: number,
   sourceHash: string,
@@ -427,12 +611,13 @@ function createProgress(
   overrides?: Partial<PreprocessProgress>
 ): PreprocessProgress {
   return {
-    status,
+    status: "running",
     totalCandidates,
     processedCandidates,
     totalSteps: 5,
-    completedSteps: status === "completed" ? 5 : 0,
-    batchCount: totalCandidates > 0 ? 1 : 0,
+    completedSteps: 0,
+    batchCount: totalCandidates > 0 ? Math.max(1, Math.ceil(totalCandidates / PREPROCESS_CHUNK_SIZE)) : 0,
+    processedBatches: 0,
     relativeFilePath,
     sourceHash,
     startedAt: new Date().toISOString(),

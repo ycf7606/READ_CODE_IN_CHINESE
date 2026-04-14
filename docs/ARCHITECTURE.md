@@ -19,7 +19,7 @@ The extension is designed to make source code easier to read by combining:
 
 - registers commands
 - manages selection listeners
-- keeps the panel synced with the current editor selection
+- keeps the panel synced with the current source-editor selection even when webview focus moves into the panel
 - builds explanation requests
 - coordinates glossary refresh, workspace index generation, official docs sync, file preprocess lookup/build, onboarding, and follow-up chat
 - cancels stale explain and follow-up tasks when newer user context arrives
@@ -41,7 +41,7 @@ The extension is designed to make source code easier to read by combining:
 - `knowledgeStore.ts`: imports `.md`, `.txt`, and `.json` documents, stores them in workspace cache, and retrieves top keyword matches
 - `officialDocs.ts`: downloads preset official/reference language documents and chunks them into the knowledge library
 - `preprocessStore.ts`: stores file-scoped batches of user-defined symbol summaries
-- `symbolPreprocessBuilder.ts`: builds a raw file candidate pool, asks the provider to select worth-preprocessing terms when available, falls back locally if needed, then sends one full-file batch request and writes the preprocess cache
+- `symbolPreprocessBuilder.ts`: builds a raw file candidate pool, asks the provider to select worth-preprocessing terms when available, reconciles that result against audience retention targets, then preprocesses selected symbols in prioritized chunks while writing partial cache updates
 - `tokenKnowledgeStore.ts`: stores successful token-level explanations as a compatibility fallback cache
 - `tokenKnowledgeBuilder.ts`: older token-prebuild helper retained for compatibility paths
 
@@ -57,7 +57,7 @@ The extension is designed to make source code easier to read by combining:
 ### `src/ui/`
 
 - `glossaryTreeProvider.ts`: Explorer sidebar glossary
-- `explanationPanel.ts`: explanation, selection metadata, preprocess progress, visible file wordbook, glossary snapshot, workspace preview, and follow-up chat
+- `explanationPanel.ts`: explanation tab, separate wordbook tab, selection metadata, preprocess progress, glossary snapshot, workspace preview, and follow-up chat
 - `settingsPanel.ts`: first-run onboarding, provider controls, preprocess trigger, occupation presets, provider-backed prompt generation, and editable prompt / hyperparameter controls
 
 ## Data Flow
@@ -73,14 +73,15 @@ The extension is designed to make source code easier to read by combining:
 9. Explanation request is built with user goal, occupation, professional level, custom prompt instructions, selection-line preview, and provider hyperparameters
 10. Settings-panel prompt generation can call the configured provider to synthesize a reusable global prompt from the current user profile
 11. Local or remote provider returns a structured explanation grounded in the exact callsite context
-12. In the background, the extension first builds a raw candidate pool from the current file glossary and asks the configured provider to choose wordbook terms using full-file context, with `intermediate` acting as the default medium profile
-13. If remote selection is unavailable or fails, the extension falls back to local audience-aware filtering
-14. It then preprocesses only those selected symbols in one full-file batch using a dedicated wordbook prompt that ignores explanation sections
-15. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins
-16. Successful remote token explanations can still be written into the token knowledge cache
-17. Panel, glossary UI, visible wordbook, preprocess progress, and status metadata update
-18. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
-19. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
+12. In the background, the extension first builds a raw candidate pool from the current file glossary and asks the configured provider to choose wordbook terms using full-file context, with retention targets of 100% for `beginner`, about 85% for `intermediate`, and about 70% for `expert`
+13. If remote selection is unavailable or fails, the extension falls back to local audience-aware ranking with the same retention targets
+14. The selected wordbook terms are then processed in prioritized chunks of about 20 symbols, with partial cache writes after each chunk
+15. Recent selection activity influences the order of the remaining chunks, so repeatedly read areas are preprocessed earlier
+16. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins, but background wordbook preprocessing is not canceled for ordinary same-file reading
+17. Successful remote token explanations can still be written into the token knowledge cache
+18. Panel, glossary UI, wordbook tab, preprocess progress, and status metadata update
+19. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
+20. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 

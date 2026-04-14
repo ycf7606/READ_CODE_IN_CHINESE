@@ -15,6 +15,10 @@
 - Tightened `intermediate` preprocessing so the default medium profile skips overly common symbols such as `forward`
 - Injected `occupation` and `professionalLevel` directly into runtime explanation prompts for more reliable audience-aware wording
 - Replaced fixed local preprocess-term filtering on the remote path with a dedicated API-driven candidate-selection pass plus local fallback
+- Stabilized source-editor monitoring when the user clicks inside the explanation panel
+- Changed wordbook retention to keep all beginner candidates, about 85% for intermediate, and about 70% for expert
+- Switched wordbook preprocessing to fast chunked batches with partial cache writes and recent-selection-based reprioritization
+- Split the webview into a cleaner explanation page and separate wordbook page, and removed suggested-question chips from the explanation UI
 
 ## 0.6.0 - 2026-04-14
 

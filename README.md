@@ -59,7 +59,7 @@
   - active file and selection metadata
   - one detected category for the current selection
   - loading spinner while remote analysis is running
-  - automatic selection watching when the panel is open
+  - automatic selection watching when the panel is open, without dropping the current source-editor context when the user clicks the panel
   - inline reasoning-effort selector for follow-up chat
   - settings button that opens the configuration panel
   - preprocess progress, symbol counts, and cache-aware status messages
@@ -183,16 +183,17 @@ When the remote provider is enabled, the extension can preprocess the active fil
 - Preprocess cache path: `.read-code-in-chinese/preprocess/<file>.json`
 - Command: `Read Code In Chinese: Preprocess Current File Symbols`
 - When a remote provider is enabled, a dedicated API selection pass chooses wordbook terms from the raw file candidate pool using full-file context, `professionalLevel`, and `occupation`
+- Selection retention now stays broad by default: `beginner` keeps all candidates, `intermediate` keeps about 85%, and `expert` keeps about 70%
 - The second pass preprocesses only the selected terms into short wordbook-style entries
-- `professionalLevel = intermediate` acts as the practical default "medium" audience and skips overly common symbols such as `forward`
-- `professionalLevel = beginner` keeps more guidance-heavy entries
-- `professionalLevel = expert` keeps an even smaller wordbook than `intermediate`
+- Wordbook preprocessing runs in chunks of about 20 terms, writes partial cache results after each chunk, and keeps reprioritizing remaining chunks around the areas the user is repeatedly reading
+- Wordbook preprocess prompts now force a fast remote path with low reasoning effort and shorter batch outputs
 - Preprocess prompt shaping ignores explanation section preferences such as `summary`, `usage`, or `risk`
 - Local heuristics remain only as a fallback when the provider cannot perform the selection pass
 - The explanation panel shows 5-step preprocess progress, symbol counts, batch count, and cache-aware status messages
 - The explanation panel also shows a visible file wordbook sourced from the current file preprocess cache
 - Single-symbol explanations first check this file-level preprocess cache before hitting the model again
-- If the user changes selection while a request is still running, the older request is aborted and the newest selection wins
+- If the user changes selection while an explanation request is still running, the older explanation is aborted and the newest selection wins
+- Background wordbook preprocessing keeps running while the user continues reading the same file
 - While the panel watches selections, explanation updates no longer keep re-revealing the panel and pulling focus away from the source editor
 
 ## Token Knowledge Cache

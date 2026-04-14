@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 16
-- Latest summary: `docs/project/summaries/2026-04-14-stage-16.md`
+- Latest completed milestone: Stage 17
+- Latest summary: `docs/project/summaries/2026-04-14-stage-17.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -41,6 +41,7 @@ Every future work session must read these files in order before making changes:
 | 14 | Audience-aware wordbook preprocessing | Completed | Two-step candidate selection, label coverage, preprocess prompt isolation, and focus-safe watched updates |
 | 15 | Medium-default audience tuning | Completed | Stricter intermediate wordbook filtering and stronger occupation/profession-aware explanation prompts |
 | 16 | API-driven preprocess selection | Completed | Remote candidate selection, 5-step preprocess progress, and resilient local fallback |
+| 17 | Focus-safe wordbook chunking and UI cleanup | Completed | Stable panel monitoring, chunked fast preprocessing, retention tuning, and cleaner split-page UI |
 
 ## Completed Tasks
 
@@ -127,6 +128,11 @@ Every future work session must read these files in order before making changes:
 - [x] S16-02 Route file preprocessing through a raw candidate pool plus remote candidate selection before batch wordbook generation.
 - [x] S16-03 Add regression coverage for remote selection normalization and the new 5-step preprocess flow.
 - [x] S16-04 Produce the Stage 16 summary file.
+- [x] S17-01 Keep source-editor monitoring stable when the user clicks inside the explanation panel.
+- [x] S17-02 Retune wordbook candidate retention to 100% / 85% / 70% for beginner / intermediate / expert.
+- [x] S17-03 Process wordbook entries in fast prioritized chunks with partial cache writes.
+- [x] S17-04 Split the panel into explanation and wordbook pages and remove suggested-question chips.
+- [x] S17-05 Produce the Stage 17 summary file.
 
 ## Current Todo
 
@@ -151,6 +157,7 @@ Every future work session must read these files in order before making changes:
 - A Stage 14 update made preprocessing audience-aware, added label/string coverage, isolated the wordbook prompt from explanation sections, and reduced focus disruption while the panel watches selection changes.
 - A Stage 15 update tightened the default medium (`intermediate`) wordbook profile and made runtime explanation prompts explicitly audience-aware even without regenerating the editable prompt.
 - A Stage 16 update moved remote file-wordbook selection away from fixed local term lists and into a dedicated provider pass over the raw candidate pool, while preserving local fallback behavior.
+- A Stage 17 update stabilized monitoring when the user interacts with the panel, widened default wordbook retention, and switched wordbook preprocessing to prioritized fast chunks with a separate wordbook page in the UI.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

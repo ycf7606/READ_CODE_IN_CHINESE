@@ -170,6 +170,26 @@ export class ExplanationPanel implements vscode.Disposable {
         gap: 8px;
       }
 
+      .tabs {
+        display: inline-flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .tab {
+        border: 1px solid var(--vscode-button-border, transparent);
+        border-radius: 999px;
+        padding: 6px 12px;
+        background: transparent;
+        color: var(--vscode-foreground);
+        cursor: pointer;
+      }
+
+      .tab.active {
+        background: color-mix(in srgb, var(--vscode-textLink-foreground) 16%, transparent);
+        color: var(--vscode-textLink-foreground);
+      }
+
       .title {
         font-size: 14px;
         font-weight: 600;
@@ -222,6 +242,15 @@ export class ExplanationPanel implements vscode.Disposable {
       }
 
       .stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      .page {
+        display: none;
+      }
+
+      .page.active {
         display: grid;
         gap: 12px;
       }
@@ -396,47 +425,59 @@ export class ExplanationPanel implements vscode.Disposable {
               <div id="watchBadge" class="badge">Manual</div>
             </div>
           </div>
+          <div class="tabs">
+            <button class="tab active" id="explainTabButton" type="button">Explain</button>
+            <button class="tab" id="wordbookTabButton" type="button">Wordbook</button>
+          </div>
           <div id="meta" class="meta"></div>
         </div>
       </section>
 
       <section class="card">
         <div class="card-body stack">
-          <div>
-            <div class="label">Summary</div>
-            <div id="engineInfo" class="meta"></div>
-            <div id="summary" class="summary empty">Select code and start an explanation.</div>
-          </div>
-          <div>
-            <div class="label">Detected Type</div>
-            <div id="detectedType" class="chips"></div>
-          </div>
-          <div>
-            <div class="label">Preprocessing</div>
-            <div class="progress-wrap">
-              <div id="preprocessMeta" class="meta"></div>
-              <div class="progress-bar"><div id="preprocessFill" class="progress-fill"></div></div>
+          <div id="explainPage" class="page active">
+            <div>
+              <div class="label">Summary</div>
+              <div id="engineInfo" class="meta"></div>
+              <div id="summary" class="summary empty">Select code and start an explanation.</div>
+            </div>
+            <div>
+              <div class="label">Detected Type</div>
+              <div id="detectedType" class="chips"></div>
+            </div>
+            <div>
+              <div class="label">Preprocessing</div>
+              <div class="progress-wrap">
+                <div id="preprocessMeta" class="meta"></div>
+                <div class="progress-bar"><div id="preprocessFill" class="progress-fill"></div></div>
+              </div>
+            </div>
+            <div>
+              <div class="label">Sections</div>
+              <div id="sections" class="stack"></div>
+            </div>
+            <div>
+              <div class="label">Glossary Snapshot</div>
+              <div id="glossary" class="glossary"></div>
+            </div>
+            <div>
+              <div class="label">Workspace Index Preview</div>
+              <div id="workspaceIndex" class="list"></div>
             </div>
           </div>
-          <div>
-            <div class="label">File Wordbook</div>
-            <div id="wordbook" class="list"></div>
-          </div>
-          <div>
-            <div class="label">Sections</div>
-            <div id="sections" class="stack"></div>
-          </div>
-          <div>
-            <div class="label">Suggested Questions</div>
-            <div id="suggestions" class="chips"></div>
-          </div>
-          <div>
-            <div class="label">Glossary Snapshot</div>
-            <div id="glossary" class="glossary"></div>
-          </div>
-          <div>
-            <div class="label">Workspace Index Preview</div>
-            <div id="workspaceIndex" class="list"></div>
+
+          <div id="wordbookPage" class="page">
+            <div>
+              <div class="label">Preprocessing</div>
+              <div class="progress-wrap">
+                <div id="wordbookPreprocessMeta" class="meta"></div>
+                <div class="progress-bar"><div id="wordbookPreprocessFill" class="progress-fill"></div></div>
+              </div>
+            </div>
+            <div>
+              <div class="label">File Wordbook</div>
+              <div id="wordbook" class="list"></div>
+            </div>
           </div>
         </div>
       </section>
@@ -468,21 +509,35 @@ export class ExplanationPanel implements vscode.Disposable {
       const watchBadge = document.getElementById("watchBadge");
       const loadingSpinner = document.getElementById("loadingSpinner");
       const settingsButton = document.getElementById("settingsButton");
+      const explainTabButton = document.getElementById("explainTabButton");
+      const wordbookTabButton = document.getElementById("wordbookTabButton");
+      const explainPage = document.getElementById("explainPage");
+      const wordbookPage = document.getElementById("wordbookPage");
       const meta = document.getElementById("meta");
       const summary = document.getElementById("summary");
       const engineInfo = document.getElementById("engineInfo");
       const detectedType = document.getElementById("detectedType");
       const preprocessMeta = document.getElementById("preprocessMeta");
       const preprocessFill = document.getElementById("preprocessFill");
+      const wordbookPreprocessMeta = document.getElementById("wordbookPreprocessMeta");
+      const wordbookPreprocessFill = document.getElementById("wordbookPreprocessFill");
       const wordbook = document.getElementById("wordbook");
       const sections = document.getElementById("sections");
-      const suggestions = document.getElementById("suggestions");
       const glossary = document.getElementById("glossary");
       const workspaceIndex = document.getElementById("workspaceIndex");
       const chatHistory = document.getElementById("chatHistory");
       const questionInput = document.getElementById("questionInput");
       const reasoningEffortSelect = document.getElementById("reasoningEffortSelect");
       const sendButton = document.getElementById("sendButton");
+      let activePage = "explain";
+
+      function setActivePage(nextPage) {
+        activePage = nextPage;
+        explainTabButton.className = nextPage === "explain" ? "tab active" : "tab";
+        wordbookTabButton.className = nextPage === "wordbook" ? "tab active" : "tab";
+        explainPage.className = nextPage === "explain" ? "page active" : "page";
+        wordbookPage.className = nextPage === "wordbook" ? "page active" : "page";
+      }
 
       function renderBulletList(items) {
         const list = document.createElement("ul");
@@ -585,7 +640,12 @@ export class ExplanationPanel implements vscode.Disposable {
 
         if (progress) {
           lines.push("Symbols: " + progress.processedCandidates + " / " + progress.totalCandidates);
-          lines.push("Batches: " + progress.batchCount);
+          lines.push(
+            "Batches: " +
+              (progress.processedBatches || 0) +
+              " / " +
+              progress.batchCount
+          );
           if (progress.currentStep) {
             lines.push("Step: " + progress.currentStep);
           }
@@ -606,6 +666,8 @@ export class ExplanationPanel implements vscode.Disposable {
 
         preprocessMeta.innerHTML = lines.map((line) => '<div>' + line + '</div>').join("");
         preprocessFill.style.width = percentage + "%";
+        wordbookPreprocessMeta.innerHTML = preprocessMeta.innerHTML;
+        wordbookPreprocessFill.style.width = preprocessFill.style.width;
       }
 
       window.addEventListener("message", (event) => {
@@ -665,22 +727,6 @@ export class ExplanationPanel implements vscode.Disposable {
           renderEmpty(sections, "No structured sections yet.");
         }
 
-        suggestions.innerHTML = "";
-        if (explanation?.suggestedQuestions?.length) {
-          for (const question of explanation.suggestedQuestions) {
-            const button = document.createElement("button");
-            button.className = "chip";
-            button.textContent = question;
-            button.addEventListener("click", () => askQuestion(question));
-            suggestions.appendChild(button);
-          }
-        } else {
-          const item = document.createElement("div");
-          item.className = "empty";
-          item.textContent = "Suggested follow-up questions will appear here.";
-          suggestions.appendChild(item);
-        }
-
         glossary.innerHTML = "";
         if ((payload.glossaryEntries || []).length) {
           for (const entry of payload.glossaryEntries.slice(0, 6)) {
@@ -722,6 +768,14 @@ export class ExplanationPanel implements vscode.Disposable {
 
       settingsButton.addEventListener("click", () => {
         vscode.postMessage({ type: "openSettings" });
+      });
+
+      explainTabButton.addEventListener("click", () => {
+        setActivePage("explain");
+      });
+
+      wordbookTabButton.addEventListener("click", () => {
+        setActivePage("wordbook");
       });
 
       reasoningEffortSelect.addEventListener("change", () => {

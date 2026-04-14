@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
-import { buildPreprocessCandidatePool, buildPreprocessCandidates } from "../analysis/preprocess";
+import {
+  buildPreprocessCandidatePool,
+  buildPreprocessCandidates,
+  getPreprocessTargetSelectionCount
+} from "../analysis/preprocess";
 import { extractGlossaryEntries } from "../analysis/glossary";
 import {
   buildFileOverviewSummary,
@@ -169,6 +173,12 @@ test("preprocess candidate builder focuses on user-defined symbols", () => {
       "const featureMap = buildFeatureMap(values);",
       "function buildFeatureMap(input) { return input; }",
       "function forward(input) { return input; }",
+      "function transform(features) { return features; }",
+      "function render(view) { return view; }",
+      "function train(batch) { return batch; }",
+      "const data = loadData();",
+      "const result = buildResult(data);",
+      "const item = result[0];",
       "const classNames = ['PCA', 'ICA'];",
       "class EmbeddingModel {}"
     ].join("\n"),
@@ -183,9 +193,19 @@ test("preprocess candidate builder focuses on user-defined symbols", () => {
   assert.ok(beginner.some((entry) => entry.term === "buildFeatureMap"));
   assert.ok(beginner.some((entry) => entry.term === "PCA"));
   assert.ok(!beginner.some((entry) => entry.term === "torch"));
-  assert.ok(!intermediate.some((entry) => entry.term === "forward"));
-  assert.ok(!expert.some((entry) => entry.term === "forward"));
-  assert.ok(beginner.length >= expert.length);
+  assert.equal(beginner.length, buildPreprocessCandidatePool(glossaryEntries).length);
+  assert.equal(
+    intermediate.length,
+    getPreprocessTargetSelectionCount(buildPreprocessCandidatePool(glossaryEntries).length, "intermediate")
+  );
+  assert.equal(
+    expert.length,
+    getPreprocessTargetSelectionCount(buildPreprocessCandidatePool(glossaryEntries).length, "expert")
+  );
+  assert.ok(beginner.length >= intermediate.length);
+  assert.ok(intermediate.length >= expert.length);
+  assert.ok(intermediate.some((entry) => entry.term === "featureMap"));
+  assert.ok(expert.some((entry) => entry.term === "buildFeatureMap"));
 });
 
 test("preprocess store reads back file-scoped cache entries", async () => {
@@ -312,11 +332,121 @@ test("symbol preprocess builder writes batch results into file cache", async () 
   assert.ok(result);
   assert.deepEqual(
     result?.candidates.map((candidate) => candidate.term).sort(),
-    ["EmbeddingModel", "featureMap"]
+    ["EmbeddingModel", "buildFeatureMap", "featureMap"]
   );
-  assert.equal(cached?.entries.length ?? 0, 2);
+  assert.equal(cached?.entries.length ?? 0, 3);
   assert.ok(cached?.entries.some((entry) => entry.summary === "featureMap summary"));
   assert.ok(progressSnapshots.includes("completed:5"));
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
+});
+
+test("symbol preprocess builder processes wordbook entries in chunks", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-symbol-preprocess-chunks-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const sourceCode = "export const ready = true;";
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "typescript");
+  const candidatePool = Array.from({ length: 46 }, (_, index) => ({
+    term: `symbol_${index}`,
+    normalizedTerm: `symbol_${index}`,
+    category: index % 2 === 0 ? "variable" : "function",
+    sourceLine: index + 1,
+    references: 2,
+    score: 100 - index
+  })) satisfies ReturnType<typeof buildPreprocessCandidatePool>;
+  const preprocessBatchSizes: number[] = [];
+  const provider = {
+    id: "openai-compatible",
+    async explain() {
+      throw new Error("unused");
+    },
+    async answerFollowUp() {
+      return {
+        answer: "unused",
+        suggestedQuestions: [],
+        source: "openai-compatible",
+        latencyMs: 1
+      };
+    },
+    async selectPreprocessCandidates(request: {
+      requestId: string;
+      languageId: string;
+      candidatePool: Array<{ term: string }>;
+    }) {
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        selectedTerms: request.candidatePool.map((candidate) => candidate.term),
+        source: "openai-compatible",
+        latencyMs: 8
+      };
+    },
+    async preprocessSymbols(request: SymbolPreprocessRequest) {
+      preprocessBatchSizes.push(request.candidates.length);
+
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        source: "openai-compatible",
+        latencyMs: 20,
+        entries: request.candidates.map((candidate) => ({
+          term: candidate.term,
+          normalizedTerm: candidate.normalizedTerm,
+          category: candidate.category,
+          sourceLine: candidate.sourceLine,
+          summary: candidate.term + " summary",
+          generatedAt: new Date().toISOString()
+        }))
+      };
+    }
+  };
+
+  const progressSnapshots: Array<{ batchCount: number; processedBatches?: number }> = [];
+  const result = await buildSymbolPreprocessCache({
+    editorText: sourceCode,
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    settings: {
+      autoExplainEnabled: false,
+      autoExplainDelayMs: 600,
+      autoOpenPanel: true,
+      providerId: "openai-compatible",
+      providerBaseUrl: "https://example.com/v1",
+      providerModel: "gpt-5.4",
+      providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerTimeoutMs: 20000,
+      providerTemperature: 0.2,
+      providerTopP: 1,
+      providerMaxTokens: 1200,
+      providerReasoningEffort: "medium",
+      detailLevel: "balanced",
+      professionalLevel: "beginner",
+      occupation: "developer",
+      sections: ["summary", "usage"],
+      userGoal: "",
+      knowledgeTopK: 3,
+      customInstructions: ""
+    },
+    glossaryEntries,
+    candidatePool,
+    workspaceStore: store,
+    provider,
+    onProgress: (progress: PreprocessProgress) => {
+      progressSnapshots.push({
+        batchCount: progress.batchCount,
+        processedBatches: progress.processedBatches
+      });
+    }
+  });
+
+  assert.ok(result);
+  assert.equal(preprocessBatchSizes.length, 3);
+  assert.deepEqual(preprocessBatchSizes, [20, 20, 6]);
+  assert.ok(progressSnapshots.some((snapshot) => snapshot.batchCount === 3));
+  assert.ok(progressSnapshots.some((snapshot) => snapshot.processedBatches === 3));
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 
@@ -546,6 +676,7 @@ test("openai provider normalizes preprocess candidate selections", async () => {
       knowledgeTopK: 3,
       customInstructions: ""
     });
+    const candidatePool = buildPreprocessCandidatePool(glossaryEntries);
     const response = await provider.selectPreprocessCandidates!({
       requestId: "remote-select",
       languageId: "typescript",
@@ -558,7 +689,9 @@ test("openai provider normalizes preprocess candidate selections", async () => {
         "function buildFeatureMap(input) { return input; }",
         "class EmbeddingModel {}"
       ].join("\n"),
-      candidatePool: buildPreprocessCandidatePool(glossaryEntries),
+      candidatePool,
+      targetSelectionCount: 2,
+      retentionRatio: 0.85,
       userGoal: "",
       customInstructions: ""
     });

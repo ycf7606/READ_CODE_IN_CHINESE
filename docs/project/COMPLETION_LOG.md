@@ -685,3 +685,62 @@
   - `D:\project\????\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-16.md`
 - Verification:
   - Manual review of the updated context files
+
+### S17-01 Keep monitoring stable while using the panel
+
+- Stage: 17
+- Result: Clicking inside the explanation panel no longer drops the current source-editor context or cancels same-file reading state, so selection watching remains stable while the user uses the panel.
+- Files:
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S17-02 Retune wordbook retention and ranking
+
+- Stage: 17
+- Result: Wordbook candidate retention now keeps all beginner candidates, about 85% for intermediate, and about 70% for expert, with common-item handling downgraded from hard filtering to audience-aware ranking.
+- Files:
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\analysis\preprocess.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\prompts\openAICompatiblePrompt.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\test\index.test.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S17-03 Add fast chunked wordbook preprocessing
+
+- Stage: 17
+- Result: File wordbook preprocessing now runs in fast low-reasoning chunks of about 20 symbols, writes partial cache files after each chunk, and reprioritizes remaining chunks around recently selected code regions.
+- Files:
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\knowledge\symbolPreprocessBuilder.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\providers\openAICompatibleProvider.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\test\index.test.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S17-04 Split explanation and wordbook pages
+
+- Stage: 17
+- Result: The webview now uses a cleaner explanation page plus a separate wordbook page, and the suggested-question chips were removed from the explanation UI.
+- Files:
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S17-05 Update docs and publish the Stage 17 summary
+
+- Stage: 17
+- Result: Updated README, architecture notes, changelog, workboard, and added the Stage 17 summary so future sessions load the new focus-safe chunked wordbook workflow.
+- Files:
+  - `D:\project\????\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\????\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\????\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\????\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\????\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-17.md`
+- Verification:
+  - Manual review of the updated context files

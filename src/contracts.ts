@@ -258,6 +258,8 @@ export interface PreprocessCandidateSelectionRequest {
   occupation: Occupation;
   sourceCode: string;
   candidatePool: PreprocessedSymbolCandidate[];
+  targetSelectionCount: number;
+  retentionRatio: number;
   userGoal: string;
   customInstructions: string;
 }
@@ -297,6 +299,7 @@ export interface PreprocessProgress {
   totalSteps: number;
   completedSteps: number;
   batchCount: number;
+  processedBatches?: number;
   relativeFilePath?: string;
   currentStep?: string;
   message?: string;

@@ -361,14 +361,14 @@ function buildPayloadCandidates(
       {
         ...basePayload,
         temperature: 0,
-        max_tokens: Math.min(settings.providerMaxTokens, 1400),
+        max_tokens: Math.min(settings.providerMaxTokens, 700),
         reasoning_effort: "low",
         response_format: { type: "json_object" }
       },
       {
         ...basePayload,
         temperature: 0,
-        max_tokens: Math.min(settings.providerMaxTokens, 1400),
+        max_tokens: Math.min(settings.providerMaxTokens, 700),
         response_format: { type: "json_object" }
       }
     ];
@@ -379,14 +379,14 @@ function buildPayloadCandidates(
       {
         ...basePayload,
         temperature: 0,
-        max_tokens: Math.min(settings.providerMaxTokens, 700),
+        max_tokens: Math.min(settings.providerMaxTokens, 400),
         reasoning_effort: "low",
         response_format: { type: "json_object" }
       },
       {
         ...basePayload,
         temperature: 0,
-        max_tokens: Math.min(settings.providerMaxTokens, 700),
+        max_tokens: Math.min(settings.providerMaxTokens, 400),
         response_format: { type: "json_object" }
       }
     ];

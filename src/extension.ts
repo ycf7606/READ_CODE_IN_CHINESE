@@ -82,6 +82,7 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   let autoExplainTimeout: NodeJS.Timeout | undefined;
   let preprocessTimeout: NodeJS.Timeout | undefined;
+  let trackedSourceEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
   let lastAutoExplainSignature = "";
   let explainTaskVersion = 0;
   let followUpTaskVersion = 0;
@@ -89,10 +90,11 @@ export function activate(context: vscode.ExtensionContext): void {
   let activeExplainTask: ActiveTaskState | undefined;
   let activeFollowUpTask: ActiveTaskState | undefined;
   let activePreprocessTask: ActiveTaskState | undefined;
+  const recentSelectionLinesByFile = new Map<string, number[]>();
 
   const panel = new ExplanationPanel(async (message) => {
     if (message.type === "ready") {
-      syncPanelContext(vscode.window.activeTextEditor);
+      syncPanelContext(getPreferredSourceEditor());
       await refreshWordbookForActiveEditor();
       return;
     }
@@ -314,11 +316,17 @@ export function activate(context: vscode.ExtensionContext): void {
         logger.info("Effective settings", summarizeSettings(getSettings()));
         cancelPreprocessTask("Configuration changed");
         updateStatusBar(statusBarItem);
-        syncPanelContext(vscode.window.activeTextEditor);
+        syncPanelContext(getPreferredSourceEditor());
         schedulePreprocessForActiveEditor();
       }
     }),
     vscode.window.onDidChangeActiveTextEditor(async (editor) => {
+      if (!editor) {
+        syncPanelContext(getPreferredSourceEditor());
+        return;
+      }
+
+      trackedSourceEditor = editor;
       cancelExplainTask("Active editor changed");
       cancelFollowUpTask("Active editor changed");
       cancelPreprocessTask("Active editor changed");
@@ -345,7 +353,9 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.window.onDidChangeTextEditorSelection(async (event) => {
+      trackedSourceEditor = event.textEditor;
       syncPanelContext(event.textEditor);
+      recordSelectionFocus(event.textEditor, event.textEditor.selection);
 
       if (!event.textEditor.selection || event.textEditor.selection.isEmpty) {
         return;
@@ -392,7 +402,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   updateStatusBar(statusBarItem);
-  syncPanelContext(vscode.window.activeTextEditor);
+  syncPanelContext(getPreferredSourceEditor());
   void refreshGlossaryForActiveEditor(false);
   void refreshWordbookForActiveEditor();
   schedulePreprocessForActiveEditor();
@@ -513,7 +523,7 @@ export function activate(context: vscode.ExtensionContext): void {
     reason: "manual" | "auto",
     options: ExplainSelectionOptions
   ): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
+    const editor = getPreferredSourceEditor();
 
     if (!editor) {
       await handleSelectionFailure(
@@ -542,7 +552,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     cancelFollowUpTask("New selection explanation started");
-    cancelPreprocessTask("New selection explanation started");
     const task = startTask("explain");
 
     const execute = async (): Promise<void> => {
@@ -1261,12 +1270,12 @@ export function activate(context: vscode.ExtensionContext): void {
       isLoading: false,
       reasoningEffort: getSettings().providerReasoningEffort,
       statusMessage: message,
-      currentFile: vscode.window.activeTextEditor
-        ? getProjectContext(vscode.window.activeTextEditor.document, logger)?.relativeFilePath ??
-          path.basename(vscode.window.activeTextEditor.document.uri.fsPath)
+      currentFile: getPreferredSourceEditor()
+        ? getProjectContext(getPreferredSourceEditor()!.document, logger)?.relativeFilePath ??
+          path.basename(getPreferredSourceEditor()!.document.uri.fsPath)
         : undefined,
-      currentSelectionLabel: vscode.window.activeTextEditor
-        ? formatSelectionLabel(vscode.window.activeTextEditor.selection)
+      currentSelectionLabel: getPreferredSourceEditor()
+        ? formatSelectionLabel(getPreferredSourceEditor()!.selection)
         : undefined
     });
 
@@ -1304,7 +1313,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   async function refreshWordbookForActiveEditor(): Promise<void> {
-    await refreshWordbookForEditor(vscode.window.activeTextEditor);
+    await refreshWordbookForEditor(getPreferredSourceEditor());
   }
 
   async function refreshWordbookForEditor(
@@ -1344,22 +1353,23 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function syncPanelContext(editor: vscode.TextEditor | undefined): void {
-    const projectContext = editor ? getProjectContext(editor.document, logger) : undefined;
-    const currentGranularity = inferCurrentGranularity(editor);
+    const sourceEditor = getPreferredSourceEditor(editor);
+    const projectContext = sourceEditor ? getProjectContext(sourceEditor.document, logger) : undefined;
+    const currentGranularity = inferCurrentGranularity(sourceEditor);
 
     panel.setState({
       isWatchingSelection: panel.isWatchingSelection(),
-      currentFile: projectContext?.relativeFilePath ?? editor?.document.fileName,
-      currentSelectionLabel: editor ? formatSelectionLabel(editor.selection) : undefined,
+      currentFile: projectContext?.relativeFilePath ?? sourceEditor?.document.fileName,
+      currentSelectionLabel: sourceEditor ? formatSelectionLabel(sourceEditor.selection) : undefined,
       currentGranularity,
-      wordbookEntries: getVisibleWordbookEntries(editor),
+      wordbookEntries: getVisibleWordbookEntries(sourceEditor),
       reasoningEffort: getSettings().providerReasoningEffort,
-      preprocessProgress: getVisiblePreprocessProgress(sessionState.preprocessProgress, editor)
+      preprocessProgress: getVisiblePreprocessProgress(sessionState.preprocessProgress, sourceEditor)
     });
   }
 
   async function runPreprocessForActiveEditor(showNotifications: boolean): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
+    const editor = getPreferredSourceEditor();
 
     if (!editor) {
       return;
@@ -1436,6 +1446,22 @@ export function activate(context: vscode.ExtensionContext): void {
         provider,
         logger,
         signal: task.controller.signal,
+        getPriorityScore: (sourceLine) =>
+          getSelectionPriorityScore(projectContext.relativeFilePath, sourceLine),
+        onCacheUpdate: (cacheFile) => {
+          if (!isTaskCurrent("preprocess", task.version) || task.controller.signal.aborted) {
+            return;
+          }
+
+          setWordbookState(
+            projectContext.relativeFilePath,
+            cacheFile.sourceHash,
+            cacheFile.entries
+          );
+          panel.setState({
+            wordbookEntries: getVisibleWordbookEntries(editor)
+          });
+        },
         onProgress: (progress) => {
           if (!isTaskCurrent("preprocess", task.version) || task.controller.signal.aborted) {
             return;
@@ -1511,6 +1537,55 @@ export function activate(context: vscode.ExtensionContext): void {
         activePreprocessTask = undefined;
       }
     }
+  }
+
+  function getPreferredSourceEditor(
+    editor?: vscode.TextEditor
+  ): vscode.TextEditor | undefined {
+    return editor ?? vscode.window.activeTextEditor ?? trackedSourceEditor;
+  }
+
+  function recordSelectionFocus(
+    editor: vscode.TextEditor,
+    selection: vscode.Selection
+  ): void {
+    if (selection.isEmpty) {
+      return;
+    }
+
+    const relativeFilePath = getRelativeFilePath(editor);
+
+    if (!relativeFilePath) {
+      return;
+    }
+
+    const midpointLine = Math.floor((selection.start.line + selection.end.line) / 2) + 1;
+    const recentLines = recentSelectionLinesByFile.get(relativeFilePath) ?? [];
+    recentLines.push(midpointLine);
+
+    if (recentLines.length > 12) {
+      recentLines.splice(0, recentLines.length - 12);
+    }
+
+    recentSelectionLinesByFile.set(relativeFilePath, recentLines);
+  }
+
+  function getSelectionPriorityScore(
+    relativeFilePath: string,
+    sourceLine: number
+  ): number {
+    const recentLines = recentSelectionLinesByFile.get(relativeFilePath) ?? [];
+
+    return recentLines.reduce((score, line, index) => {
+      const recencyWeight = index + 1;
+      const distance = Math.abs(line - sourceLine);
+
+      if (distance > 24) {
+        return score;
+      }
+
+      return score + Math.max(0, 25 - distance) * recencyWeight;
+    }, 0);
   }
 }
 
