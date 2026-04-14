@@ -178,7 +178,7 @@ export function buildSymbolPreprocessPrompts(request: SymbolPreprocessRequest): 
   const candidateLines = request.candidates
     .map(
       (candidate) =>
-        `- ${candidate.term} | category=${candidate.category} | line=${candidate.sourceLine} | refs=${candidate.references}`
+        `- ${candidate.term} | category=${candidate.category} | origin=${candidate.symbolOrigin ?? "local"} | scope=${candidate.scopePath?.join(" > ") ?? "module"} | line=${candidate.sourceLine} | refs=${candidate.references}`
     )
     .join("\n");
 
@@ -190,6 +190,7 @@ export function buildSymbolPreprocessPrompts(request: SymbolPreprocessRequest): 
       "Return one short sentence per symbol.",
       "This is a file wordbook task, not a full explanation task.",
       "Focus only on the symbol's role in this file.",
+      "Prefer concise dictionary-style meanings.",
       "Do not mirror explanation sections such as summary, inputOutput, usage, syntax, or risk.",
       "Do not add sections, markdown, or extra keys.",
       "Do not explain imports, built-in syntax, or generic language rules.",
@@ -219,7 +220,7 @@ export function buildPreprocessCandidateSelectionPrompts(
   const candidateLines = request.candidatePool
     .map(
       (candidate) =>
-        `- ${candidate.term} | category=${candidate.category} | line=${candidate.sourceLine} | refs=${candidate.references} | score=${candidate.score}`
+        `- ${candidate.term} | category=${candidate.category} | origin=${candidate.symbolOrigin ?? "local"} | scope=${candidate.scopePath?.join(" > ") ?? "module"} | line=${candidate.sourceLine} | refs=${candidate.references} | score=${candidate.score}`
     )
     .join("\n");
 

@@ -28,7 +28,7 @@
 ## Current Status
 
 - Stage 0-7 completed
-- Stage 20 selection-focused explanation polish is complete, so qualified API call symbols can enter preprocessing and the explanation page now highlights the current selection with basic markdown rendering
+- Stage 21 LSP-aware wordbook structure is complete, so glossary extraction now combines regex and VS Code document symbols, and the wordbook tab is layered, searchable, and scope-filterable
 - Tracking board: `docs/project/WORKBOARD.md`
 
 ## Main Commands
@@ -65,7 +65,10 @@
   - settings button that opens the configuration panel
   - preprocess progress with separate candidate-pool, selected-target, cached-entry, and batch counts
   - visible full-file wordbook for the current file preprocess cache
+  - layered wordbook view that separates `File Symbols` from `Library / API Symbols`
   - compact collapsible wordbook tree grouped by classes, functions, and module scope
+  - term search and quick filtering to the current class or current function
+  - per-file remembered wordbook expand state, search text, and scope filter
   - basic markdown rendering for summaries, sections, wordbook entries, and follow-up chat
   - workspace index preview
   - follow-up chat
@@ -195,7 +198,8 @@ When the remote provider is enabled, the extension can preprocess the active fil
 - Legacy placeholder cache entries from older builds are removed automatically when the file is reopened, so stale partial caches do not appear complete
 - Member function references such as `self.squeeze(...)`, `cls.build(...)`, and `this.load(...)` can now enter the wordbook candidate pool as file-local functions
 - Qualified call symbols such as `nn.Parameter(...)` and `torch.empty(...)` can also enter the wordbook candidate pool, so common library APIs are available to preprocessing
-- Visible wordbook entries are annotated with scope paths from the active file and rendered as a collapsible class/function tree instead of one flat list
+- Visible wordbook entries are annotated with scope paths from the active file, split into file-local vs external API layers, and rendered as a collapsible class/function tree instead of one flat list
+- Glossary rebuilding now also uses VS Code `DocumentSymbol` data when available, so local classes, methods, and variables are more robust than the earlier regex-only path
 - Single-symbol explanations first check this file-level preprocess cache before hitting the model again
 - If the user changes selection while an explanation request is still running, the older explanation is aborted and the newest selection wins
 - Background wordbook preprocessing keeps running while the user continues reading the same file

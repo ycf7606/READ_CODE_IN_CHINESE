@@ -27,8 +27,10 @@ The extension is designed to make source code easier to read by combining:
 
 ### `src/analysis/`
 
-- `glossary.ts`: extracts symbols, Python assignments, member functions, qualified call symbols, and label-like string terms, then generates stable term meanings
-- `wordbook.ts`: infers class/function scope ranges from the active file and annotates visible wordbook entries with scope paths for tree rendering
+- `documentStructure.ts`: pure conversion from indexed document symbols into glossary entries plus class/function scope regions
+- `documentSymbols.ts`: loads VS Code document symbols and adapts them into the pure document-structure layer
+- `glossary.ts`: extracts symbols, imports, Python assignments, member functions, qualified call symbols, and label-like string terms, then merges them with document-symbol results into a stable glossary
+- `wordbook.ts`: infers or reuses class/function scope ranges from the active file and annotates visible wordbook entries with scope paths for tree rendering and current-scope filtering
 - `summary.ts`: infers granularity, builds local summaries, and suggests follow-up questions
 
 ### `src/providers/`
@@ -58,7 +60,7 @@ The extension is designed to make source code easier to read by combining:
 ### `src/ui/`
 
 - `glossaryTreeProvider.ts`: Explorer sidebar glossary
-- `explanationPanel.ts`: explanation tab, separate wordbook tab, current-selection focus card, preprocess progress with clearer count semantics, compact wordbook tree rendering, markdown rendering, workspace preview, and follow-up chat
+- `explanationPanel.ts`: explanation tab, separate layered wordbook tab, current-selection focus card, preprocess progress with clearer count semantics, compact wordbook tree rendering, wordbook search/filter state persistence, markdown rendering, workspace preview, and follow-up chat
 - `settingsPanel.ts`: first-run onboarding, provider controls, preprocess trigger, occupation presets, provider-backed prompt generation, and editable prompt / hyperparameter controls
 
 ## Data Flow
@@ -67,7 +69,7 @@ The extension is designed to make source code easier to read by combining:
 2. Extension loads settings, logger, and workspace services
 3. Settings resolution prefers explicit VS Code configuration, then falls back to environment variables for development-host testing
 4. If the panel is open, selection changes automatically trigger explanation refresh without repeatedly re-revealing the panel
-5. Glossary cache is loaded or regenerated
+5. Glossary cache is loaded or regenerated, and newer builds combine regex extraction with VS Code document symbols when available
 6. Knowledge snippets are retrieved from imported or synced documents
 7. If the selection is a token, the extension first checks the active file's preprocess cache
 8. On preprocess-cache miss, it checks the older token knowledge cache
@@ -83,10 +85,11 @@ The extension is designed to make source code easier to read by combining:
 18. Successful remote token explanations can still be written into the token knowledge cache
 19. Visible wordbook entries are annotated with scope paths from the active file so the wordbook tab can group them by classes and functions
 20. Qualified dotted-call symbols can also enter the glossary and wordbook pipeline, which lets common library APIs participate in preprocessing
-21. Panel, glossary UI, wordbook tab, preprocess progress, and status metadata update with separate candidate-pool, selected-target, cached-entry, and batch counts, while early selection steps omit misleading batch counters
-22. The explanation page keeps the current selection visually pinned at the top and renders basic markdown in explanation-oriented surfaces
-23. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
-24. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
+21. The wordbook tab splits file-local symbols from library/API symbols, supports term search plus current-class/current-function filtering, and persists its tree state per file
+22. Panel, glossary UI, wordbook tab, preprocess progress, and status metadata update with separate candidate-pool, selected-target, cached-entry, and batch counts, while early selection steps omit misleading batch counters
+23. The explanation page keeps the current selection visually pinned at the top and renders basic markdown in explanation-oriented surfaces
+24. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
+25. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 
@@ -115,4 +118,5 @@ Workspace-local cache directory:
 - faster repeated symbol explanations through file-scoped preprocessing and caching
 - API-selected wordbook candidates when a remote provider is available, with audience-aware local fallback when it is not
 - audience-aware wordbook selection so experts skip overly common symbols while beginners see more guidance
+- local symbol fidelity from LSP/document-symbol data, with regex fallbacks for external API coverage
 - correctness over stale work by canceling outdated tasks quickly

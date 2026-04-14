@@ -2,6 +2,12 @@
 
 ## Unreleased - 2026-04-14
 
+- Added a hybrid glossary builder that merges regex extraction with VS Code document symbols, and invalidates old glossary caches with a builder version
+- Split the wordbook into `File Symbols` and `Library / API Symbols` layers
+- Added wordbook term search plus `current class` / `current function` filtering in the webview
+- Persisted wordbook expand state, active tab, search text, and filter selection per file in webview state
+- Added a pure document-structure conversion module so symbol-structure logic can be tested without requiring the VS Code runtime
+- Propagated symbol origin and scope metadata through preprocess candidate selection, provider normalization, and cache reuse
 - Added qualified-call symbol extraction so terms such as `Parameter` and `empty` from `nn.Parameter(...)` / `torch.empty(...)` can enter the wordbook pipeline
 - Removed the `Glossary Snapshot` panel block and stopped sending that unused payload to the webview
 - Added a prominent current-selection focus card at the top of the explanation page

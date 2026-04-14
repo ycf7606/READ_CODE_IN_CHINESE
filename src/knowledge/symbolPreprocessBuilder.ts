@@ -600,7 +600,15 @@ function normalizePreprocessEntries(
 
     normalizedEntries.push({
       ...matchedEntry,
-      isPlaceholder: false
+      category: candidate.category,
+      sourceLine: candidate.sourceLine,
+      isPlaceholder: false,
+      symbolOrigin: candidate.symbolOrigin ?? matchedEntry.symbolOrigin,
+      scopePath: candidate.scopePath?.length
+        ? [...candidate.scopePath]
+        : matchedEntry.scopePath?.length
+          ? [...matchedEntry.scopePath]
+          : undefined
     });
   }
 

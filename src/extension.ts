@@ -2,8 +2,18 @@ import { promises as fs } from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { buildPreprocessCandidatePool } from "./analysis/preprocess";
-import { extractGlossaryEntries, mergeGlossaryWithUserOverrides } from "./analysis/glossary";
-import { attachWordbookScopePaths } from "./analysis/wordbook";
+import {
+  extractGlossaryEntries,
+  mergeGeneratedGlossaryEntries,
+  mergeGlossaryWithUserOverrides
+} from "./analysis/glossary";
+import { loadDocumentStructureFromLsp } from "./analysis/documentSymbols";
+import {
+  attachWordbookScopePaths,
+  collectScopeRegions,
+  findWordbookSelectionContext,
+  WordbookScopeRegion
+} from "./analysis/wordbook";
 import {
   createWorkspaceFileSummary,
   createWorkspaceIndexMarkdown,
@@ -68,6 +78,7 @@ interface ExplainSelectionOptions {
 
 const ACTIVE_GLOSSARY_VIEW = "readCodeInChinese.glossaryView";
 const PREPROCESS_DELAY_MS = 500;
+const GLOSSARY_BUILDER_VERSION = 2;
 
 export function activate(context: vscode.ExtensionContext): void {
   const logger = new ExtensionLogger();
@@ -92,6 +103,13 @@ export function activate(context: vscode.ExtensionContext): void {
   let activeFollowUpTask: ActiveTaskState | undefined;
   let activePreprocessTask: ActiveTaskState | undefined;
   const recentSelectionLinesByFile = new Map<string, number[]>();
+  const scopeRegionCache = new Map<
+    string,
+    {
+      sourceHash: string;
+      scopeRegions: WordbookScopeRegion[];
+    }
+  >();
 
   const panel = new ExplanationPanel(async (message) => {
     if (message.type === "ready") {
@@ -1020,6 +1038,7 @@ export function activate(context: vscode.ExtensionContext): void {
       languageId: editor.document.languageId,
       relativeFilePath: projectContext.relativeFilePath,
       sourceHash,
+      builderVersion: GLOSSARY_BUILDER_VERSION,
       generatedAt: new Date().toISOString(),
       entries: updatedEntries
     };
@@ -1326,8 +1345,74 @@ export function activate(context: vscode.ExtensionContext): void {
     return attachWordbookScopePaths(
       sessionState.wordbookEntries,
       editor.document.getText(),
-      editor.document.languageId
+      editor.document.languageId,
+      getCachedScopeRegions(editor)
     );
+  }
+
+  function getCachedScopeRegions(
+    editor: vscode.TextEditor | undefined
+  ): WordbookScopeRegion[] | undefined {
+    if (!editor) {
+      return undefined;
+    }
+
+    const relativeFilePath = getRelativeFilePath(editor);
+
+    if (!relativeFilePath) {
+      return undefined;
+    }
+
+    const cachedEntry = scopeRegionCache.get(relativeFilePath);
+    const sourceHash = createContentHash(editor.document.getText());
+
+    if (!cachedEntry || cachedEntry.sourceHash !== sourceHash) {
+      return undefined;
+    }
+
+    return cachedEntry.scopeRegions;
+  }
+
+  async function ensureScopeRegions(
+    document: vscode.TextDocument,
+    relativeFilePath: string,
+    sourceHash: string
+  ): Promise<WordbookScopeRegion[]> {
+    const cachedEntry = scopeRegionCache.get(relativeFilePath);
+
+    if (cachedEntry && cachedEntry.sourceHash === sourceHash) {
+      return cachedEntry.scopeRegions;
+    }
+
+    try {
+      const lspStructure = await loadDocumentStructureFromLsp(document);
+
+      if (lspStructure?.scopeRegions.length) {
+        scopeRegionCache.set(relativeFilePath, {
+          sourceHash,
+          scopeRegions: lspStructure.scopeRegions
+        });
+        logger.info("Loaded document symbols for wordbook scopes", {
+          relativeFilePath,
+          scopeCount: lspStructure.scopeRegions.length
+        });
+
+        return lspStructure.scopeRegions;
+      }
+    } catch (error) {
+      logger.warn("Document symbol lookup failed, using fallback scopes", {
+        relativeFilePath,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    const fallbackScopeRegions = collectScopeRegions(document.getText(), document.languageId);
+    scopeRegionCache.set(relativeFilePath, {
+      sourceHash,
+      scopeRegions: fallbackScopeRegions
+    });
+
+    return fallbackScopeRegions;
   }
 
   async function refreshWordbookForActiveEditor(): Promise<void> {
@@ -1357,6 +1442,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const preprocessStore = new PreprocessStore(projectContext.workspaceStore);
     const sourceHash = createContentHash(editor.document.getText());
+    await ensureScopeRegions(editor.document, projectContext.relativeFilePath, sourceHash);
     const cacheFile = await preprocessStore.read(projectContext.relativeFilePath);
 
     if (cacheFile && cacheFile.sourceHash === sourceHash) {
@@ -1384,6 +1470,20 @@ export function activate(context: vscode.ExtensionContext): void {
     const sourceEditor = getPreferredSourceEditor(editor);
     const projectContext = sourceEditor ? getProjectContext(sourceEditor.document, logger) : undefined;
     const currentGranularity = inferCurrentGranularity(sourceEditor);
+    const selectionLine = sourceEditor
+      ? sourceEditor.selection.isEmpty
+        ? sourceEditor.selection.active.line + 1
+        : Math.floor((sourceEditor.selection.start.line + sourceEditor.selection.end.line) / 2) + 1
+      : 0;
+    const selectionContext =
+      sourceEditor && selectionLine > 0
+        ? findWordbookSelectionContext(
+            selectionLine,
+            sourceEditor.document.getText(),
+            sourceEditor.document.languageId,
+            getCachedScopeRegions(sourceEditor)
+          )
+        : undefined;
 
     panel.setState({
       isWatchingSelection: panel.isWatchingSelection(),
@@ -1391,6 +1491,9 @@ export function activate(context: vscode.ExtensionContext): void {
       currentSelectionLabel: sourceEditor ? formatSelectionLabel(sourceEditor.selection) : undefined,
       currentSelectionText: readSelectionText(sourceEditor),
       currentGranularity,
+      currentClassScope: selectionContext?.currentClassScope,
+      currentFunctionScope: selectionContext?.currentFunctionScope,
+      currentScopePath: selectionContext?.scopePath,
       wordbookEntries: getVisibleWordbookEntries(sourceEditor),
       reasoningEffort: getSettings().providerReasoningEffort,
       preprocessProgress: getVisiblePreprocessProgress(sessionState.preprocessProgress, sourceEditor)
@@ -1735,21 +1838,47 @@ async function getOrCreateGlossary(
 ): Promise<GlossaryEntry[]> {
   const currentSourceHash = createContentHash(document.getText());
   const existingCache = await workspaceStore.readGlossaryCache(relativeFilePath);
+  const isCacheValid = Boolean(
+    existingCache &&
+      existingCache.sourceHash === currentSourceHash &&
+      existingCache.builderVersion === GLOSSARY_BUILDER_VERSION
+  );
 
-  if (!forceRefresh && existingCache && existingCache.sourceHash === currentSourceHash) {
+  if (!forceRefresh && isCacheValid) {
+    const cachedGlossary = existingCache as GlossaryCacheFile;
+
     logger?.info("Glossary cache hit", {
       relativeFilePath,
-      entryCount: existingCache.entries.length
+      entryCount: cachedGlossary.entries.length,
+      builderVersion: cachedGlossary.builderVersion
     });
-    return existingCache.entries;
+    return cachedGlossary.entries;
   }
 
   logger?.info("Glossary cache miss", {
     relativeFilePath,
-    forceRefresh
+    forceRefresh,
+    cachedBuilderVersion: existingCache?.builderVersion ?? 0
   });
 
-  const generatedEntries = extractGlossaryEntries(document.getText(), document.languageId);
+  const regexEntries = extractGlossaryEntries(document.getText(), document.languageId);
+  let lspEntries: GlossaryEntry[] = [];
+
+  try {
+    const lspStructure = await loadDocumentStructureFromLsp(document);
+    lspEntries = lspStructure?.glossaryEntries ?? [];
+    logger?.info("Glossary rebuild loaded document symbols", {
+      relativeFilePath,
+      symbolCount: lspEntries.length
+    });
+  } catch (error) {
+    logger?.warn("Glossary rebuild could not load document symbols", {
+      relativeFilePath,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  const generatedEntries = mergeGeneratedGlossaryEntries(regexEntries, lspEntries);
   const mergedEntries = mergeGlossaryWithUserOverrides(
     generatedEntries,
     existingCache?.entries ?? []
@@ -1758,6 +1887,7 @@ async function getOrCreateGlossary(
     languageId: document.languageId,
     relativeFilePath,
     sourceHash: currentSourceHash,
+    builderVersion: GLOSSARY_BUILDER_VERSION,
     generatedAt: new Date().toISOString(),
     entries: mergedEntries
   };

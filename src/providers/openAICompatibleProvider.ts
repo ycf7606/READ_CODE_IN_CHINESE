@@ -607,7 +607,9 @@ function normalizePreprocessEntries(
       sourceLine: matchedCandidate.sourceLine,
       summary,
       generatedAt: new Date().toISOString(),
-      isPlaceholder: false
+      isPlaceholder: false,
+      symbolOrigin: matchedCandidate.symbolOrigin,
+      scopePath: matchedCandidate.scopePath?.length ? [...matchedCandidate.scopePath] : undefined
     });
   }
 

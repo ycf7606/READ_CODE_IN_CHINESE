@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 20
-- Latest summary: `docs/project/summaries/2026-04-14-stage-20.md`
+- Latest completed milestone: Stage 21
+- Latest summary: `docs/project/summaries/2026-04-14-stage-21.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -45,6 +45,7 @@ Every future work session must read these files in order before making changes:
 | 18 | Wordbook cache integrity and progress clarity | Completed | Full wordbook rendering, placeholder-safe cache writes, legacy cache cleanup, and clearer progress counts |
 | 19 | Wordbook scope tree and member coverage | Completed | Selection-phase progress cleanup, class-member function extraction, and collapsible scope-based wordbook UI |
 | 20 | Selection-focused explanation polish | Completed | Qualified-call API symbol extraction, top-of-page selection focus, markdown rendering, and glossary snapshot removal |
+| 21 | LSP-aware wordbook structure | Completed | Hybrid LSP glossary extraction, local/API wordbook layers, search/scope filters, and per-file expand-state persistence |
 
 ## Completed Tasks
 
@@ -150,6 +151,11 @@ Every future work session must read these files in order before making changes:
 - [x] S20-02 Add a top-of-page current-selection focus card and basic markdown rendering for explanation surfaces.
 - [x] S20-03 Remove the `Glossary Snapshot` block and stop sending its unused panel payload.
 - [x] S20-04 Review project polish, apply small cleanup, and produce the Stage 20 summary file.
+- [x] S21-01 Upgrade glossary generation to a hybrid regex + LSP document-symbol pipeline with cache-version invalidation.
+- [x] S21-02 Propagate local/external origin metadata and scope paths through preprocessing, provider normalization, and cache reuse.
+- [x] S21-03 Split the wordbook into `File Symbols` and `Library / API Symbols` layers and add term search plus current-class/current-function filtering.
+- [x] S21-04 Persist wordbook tree expansion state, active tab, and wordbook controls per file inside the webview state cache.
+- [x] S21-05 Add regression coverage for merged glossary metadata, document-structure conversion, and preprocess candidate metadata, then produce the Stage 21 summary file.
 
 ## Current Todo
 
@@ -178,6 +184,7 @@ Every future work session must read these files in order before making changes:
 - A Stage 18 update fixed wordbook cache integrity by preventing placeholder entries from masquerading as completed results, showing the full wordbook tab, cleaning legacy caches on load, and clarifying progress counts.
 - A Stage 19 update hid misleading selection-phase batch counters, added class-member method extraction, and turned the wordbook page into a compact collapsible scope tree.
 - A Stage 20 update widened preprocessing to qualified API call symbols, highlighted the current selection at the top of the explanation page, added basic markdown rendering, and removed the now-unused glossary snapshot block.
+- A Stage 21 update moved glossary generation to a hybrid regex + LSP structure pipeline, carried symbol origin/scope metadata through the wordbook cache, and upgraded the wordbook tab into a layered searchable tree with per-file persisted expand state.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

@@ -1,4 +1,4 @@
-import { GlossaryCategory, GlossaryEntry } from "../contracts";
+import { GlossaryCategory, GlossaryEntry, SymbolOrigin } from "../contracts";
 import { humanizeIdentifier } from "../utils/text";
 
 const COMMON_KEYWORDS = new Set([
@@ -103,7 +103,9 @@ function addEntry(
   map: Map<string, GlossaryEntry>,
   term: string,
   category: GlossaryCategory,
-  sourceLine: number
+  sourceLine: number,
+  symbolOrigin: SymbolOrigin = "local",
+  scopePath?: string[]
 ): void {
   const trimmedTerm = term.trim();
   const isLabel = category === "label";
@@ -123,6 +125,12 @@ function addEntry(
     if (!existingEntry.sourceLine && sourceLine > 0) {
       existingEntry.sourceLine = sourceLine;
     }
+    if (existingEntry.symbolOrigin !== "local" && symbolOrigin === "local") {
+      existingEntry.symbolOrigin = "local";
+    }
+    if ((!existingEntry.scopePath || existingEntry.scopePath.length === 0) && scopePath?.length) {
+      existingEntry.scopePath = [...scopePath];
+    }
     if (CATEGORY_PRIORITY[category] > CATEGORY_PRIORITY[existingEntry.category]) {
       existingEntry.category = category;
       existingEntry.meaning = buildMeaning(existingEntry.term, category);
@@ -138,6 +146,8 @@ function addEntry(
     sourceLine,
     references: 1,
     source: "generated",
+    symbolOrigin,
+    scopePath: scopePath?.length ? [...scopePath] : undefined,
     updatedAt: new Date().toISOString()
   });
 }
@@ -152,7 +162,7 @@ function addStringLabelEntries(
   }
 
   for (const match of line.matchAll(/['"`]([A-Za-z][A-Za-z0-9_-]{1,40})['"`]/g)) {
-    addEntry(map, match[1], "label", lineNumber);
+    addEntry(map, match[1], "label", lineNumber, "local");
   }
 }
 
@@ -166,11 +176,11 @@ function addPythonAssignmentEntries(
   }
 
   for (const match of line.matchAll(/(?:^|[\s,(])([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?![=>=])/g)) {
-    addEntry(map, match[1], "variable", lineNumber);
+    addEntry(map, match[1], "variable", lineNumber, "local");
   }
 
   for (const match of line.matchAll(/\b(?:self|cls)\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g)) {
-    addEntry(map, match[1], "variable", lineNumber);
+    addEntry(map, match[1], "variable", lineNumber, "local");
   }
 }
 
@@ -180,7 +190,7 @@ function addMemberFunctionEntries(
   lineNumber: number
 ): void {
   for (const match of line.matchAll(/\b(?:this|self|cls)\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
-    addEntry(map, match[1], "function", lineNumber);
+    addEntry(map, match[1], "function", lineNumber, "local");
   }
 }
 
@@ -194,7 +204,64 @@ function addQualifiedCallEntries(
   )) {
     const term = match[1];
     const category = /^[A-Z]/.test(term) ? "class" : "function";
-    addEntry(map, term, category, lineNumber);
+    addEntry(map, term, category, lineNumber, "external");
+  }
+}
+
+function addImportEntries(
+  map: Map<string, GlossaryEntry>,
+  line: string,
+  lineNumber: number,
+  languageId: string
+): void {
+  for (const match of line.matchAll(/\bimport\s+([A-Za-z_][A-Za-z0-9_]*)\s+from\b/g)) {
+    addEntry(map, match[1], "import", lineNumber, "external");
+  }
+
+  for (const match of line.matchAll(/\bimport\s+\*\s+as\s+([A-Za-z_][A-Za-z0-9_]*)\b/g)) {
+    addEntry(map, match[1], "import", lineNumber, "external");
+  }
+
+  for (const match of line.matchAll(/\bimport\s*\{([^}]*)\}/g)) {
+    const clause = match[1];
+
+    for (const part of clause.split(",")) {
+      const trimmedPart = part.trim();
+
+      if (!trimmedPart) {
+        continue;
+      }
+
+      const aliasMatch = /\bas\s+([A-Za-z_][A-Za-z0-9_]*)$/i.exec(trimmedPart);
+      const directMatch = /^([A-Za-z_][A-Za-z0-9_]*)$/.exec(trimmedPart);
+      const term = aliasMatch?.[1] ?? directMatch?.[1];
+
+      if (term) {
+        addEntry(map, term, "import", lineNumber, "external");
+      }
+    }
+  }
+
+  if (languageId === "python") {
+    for (const match of line.matchAll(/\bfrom\s+[A-Za-z_][A-Za-z0-9_.]*\s+import\s+(.+)$/g)) {
+      const clause = match[1];
+
+      for (const part of clause.split(",")) {
+        const trimmedPart = part.trim();
+
+        if (!trimmedPart) {
+          continue;
+        }
+
+        const aliasMatch = /\bas\s+([A-Za-z_][A-Za-z0-9_]*)$/i.exec(trimmedPart);
+        const directMatch = /^([A-Za-z_][A-Za-z0-9_]*)$/.exec(trimmedPart);
+        const term = aliasMatch?.[1] ?? directMatch?.[1];
+
+        if (term) {
+          addEntry(map, term, "import", lineNumber, "external");
+        }
+      }
+    }
   }
 }
 
@@ -210,15 +277,15 @@ export function extractGlossaryEntries(
     const lineNumber = index + 1;
 
     for (const match of line.matchAll(/\b(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
-      addEntry(glossaryMap, match[1], "variable", lineNumber);
+      addEntry(glossaryMap, match[1], "variable", lineNumber, "local");
     }
 
     for (const match of line.matchAll(/\b(?:this|self)\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g)) {
-      addEntry(glossaryMap, match[1], "variable", lineNumber);
+      addEntry(glossaryMap, match[1], "variable", lineNumber, "local");
     }
 
     for (const match of line.matchAll(/\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
-      addEntry(glossaryMap, match[1], "function", lineNumber);
+      addEntry(glossaryMap, match[1], "function", lineNumber, "local");
     }
 
     addMemberFunctionEntries(glossaryMap, line, lineNumber);
@@ -235,22 +302,20 @@ export function extractGlossaryEntries(
             ? "type"
             : "unknown";
 
-      addEntry(glossaryMap, match[1], category, lineNumber);
+      addEntry(glossaryMap, match[1], category, lineNumber, "local");
     }
 
-    for (const match of line.matchAll(/\bimport\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
-      addEntry(glossaryMap, match[1], "import", lineNumber);
-    }
+    addImportEntries(glossaryMap, line, lineNumber, languageId);
 
     for (const match of line.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)) {
-      addEntry(glossaryMap, match[1], "constant", lineNumber);
+      addEntry(glossaryMap, match[1], "constant", lineNumber, "local");
     }
 
     addStringLabelEntries(glossaryMap, line, lineNumber);
 
     if (languageId === "python") {
       for (const match of line.matchAll(/\bdef\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
-        addEntry(glossaryMap, match[1], "function", lineNumber);
+        addEntry(glossaryMap, match[1], "function", lineNumber, "local");
       }
 
       addPythonAssignmentEntries(glossaryMap, line, lineNumber);
@@ -261,7 +326,7 @@ export function extractGlossaryEntries(
     const fallbackTokens = sourceCode.match(/\b[A-Za-z_][A-Za-z0-9_]{2,}\b/g) ?? [];
 
     for (const token of fallbackTokens) {
-      addEntry(glossaryMap, token, "unknown", 0);
+      addEntry(glossaryMap, token, "unknown", 0, "local");
     }
   }
 
@@ -302,6 +367,49 @@ export function mergeGlossaryWithUserOverrides(
   }
 
   return mergedEntries.sort(
+    (left, right) => right.references - left.references || left.term.localeCompare(right.term)
+  );
+}
+
+export function mergeGeneratedGlossaryEntries(
+  ...entryCollections: GlossaryEntry[][]
+): GlossaryEntry[] {
+  const mergedEntryMap = new Map<string, GlossaryEntry>();
+
+  for (const entries of entryCollections) {
+    for (const entry of entries) {
+      const existingEntry = mergedEntryMap.get(entry.normalizedTerm);
+
+      if (!existingEntry) {
+        mergedEntryMap.set(entry.normalizedTerm, {
+          ...entry,
+          scopePath: entry.scopePath?.length ? [...entry.scopePath] : undefined
+        });
+        continue;
+      }
+
+      existingEntry.references += entry.references;
+
+      if (!existingEntry.sourceLine && entry.sourceLine) {
+        existingEntry.sourceLine = entry.sourceLine;
+      }
+
+      if (CATEGORY_PRIORITY[entry.category] > CATEGORY_PRIORITY[existingEntry.category]) {
+        existingEntry.category = entry.category;
+        existingEntry.meaning = buildMeaning(existingEntry.term, entry.category);
+      }
+
+      if (existingEntry.symbolOrigin !== "local" && entry.symbolOrigin === "local") {
+        existingEntry.symbolOrigin = "local";
+      }
+
+      if ((!existingEntry.scopePath || existingEntry.scopePath.length === 0) && entry.scopePath?.length) {
+        existingEntry.scopePath = [...entry.scopePath];
+      }
+    }
+  }
+
+  return Array.from(mergedEntryMap.values()).sort(
     (left, right) => right.references - left.references || left.term.localeCompare(right.term)
   );
 }
