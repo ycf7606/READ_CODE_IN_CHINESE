@@ -297,3 +297,134 @@
   - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-9.md`
 - Verification:
   - Manual review of the updated context files
+
+### S10-01 Add token knowledge caching
+
+- Stage: 10
+- Result: Added workspace-local token knowledge storage so successful single-token explanations can be reused instead of re-calling the model every time.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\knowledge\tokenKnowledgeStore.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\storage\workspaceStore.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\contracts.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S10-02 Add settings onboarding and editable settings UI
+
+- Stage: 10
+- Result: Added a first-run settings panel, a command to reopen it, and settings editing controls for prompt and hyperparameters.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\settingsPanel.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\package.json`
+- Verification:
+  - `npm.cmd run compile`
+
+### S10-03 Add panel loading and classification UI
+
+- Stage: 10
+- Result: Added a loading spinner, six-class granularity display, inline settings button, and follow-up reasoning-effort selector in the explanation panel.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification:
+  - `npm.cmd run compile`
+
+### S10-04 Harden token remote requests
+
+- Stage: 10
+- Result: Switched token explanations to a dedicated shorter prompt, added `provider.reasoningEffort`, and added multi-attempt remote retry/downgrade logic for unstable `content: null` responses.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\prompts\openAICompatiblePrompt.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\openAICompatibleProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\config.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\package.json`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+  - Real token smoke test with `squeeze` against `gpt-5.4`
+
+### S10-05 Update docs and publish the Stage 10 summary
+
+- Stage: 10
+- Result: Updated README, architecture notes, changelog, workboard, and added the Stage 10 summary.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-10.md`
+- Verification:
+  - Manual review of the updated context files
+
+### S11-01 Add token knowledge prebuild
+
+- Stage: 11
+- Result: Added a real token knowledge prebuild flow that uses synced knowledge documents, active glossary seeds, and remote model reasoning to create reusable token entries.
+- Files:
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\knowledge\knowledgeStore.ts`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\knowledge\tokenKnowledgeBuilder.ts`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\contracts.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S11-02 Add UI and command access for token prebuild
+
+- Stage: 11
+- Result: Added a dedicated command for token knowledge prebuild and exposed the same action from the settings panel.
+- Files:
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\package.json`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\ui\settingsPanel.ts`
+- Verification:
+  - `npm.cmd run compile`
+
+### S11-03 Auto-warm token knowledge after official docs sync
+
+- Stage: 11
+- Result: Official docs sync now immediately attempts to prebuild token knowledge for the active language when the remote provider is available.
+- Files:
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\knowledge\officialDocs.ts`
+- Verification:
+  - `npm.cmd run compile`
+
+### S11-04 Expand settings panel coverage
+
+- Stage: 11
+- Result: The settings panel now covers provider mode, base URL, model, API key environment variable name, timeout, prompt instructions, and sampling controls.
+- Files:
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\ui\settingsPanel.ts`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\config.ts`
+- Verification:
+  - `npm.cmd run compile`
+
+### S11-05 Add validation for token prebuild
+
+- Stage: 11
+- Result: Added tests for token candidate extraction and token prebuild, and validated the real remote path against the configured `gpt-5.4` endpoint.
+- Files:
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\test\index.test.ts`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\src\knowledge\tokenKnowledgeBuilder.ts`
+- Verification:
+  - `npm.cmd test`
+  - Real smoke test for `squeeze` through the configured OpenAI-compatible endpoint
+
+### S11-06 Update docs and publish the Stage 11 summary
+
+- Stage: 11
+- Result: Updated README, architecture notes, changelog, workboard, and added the Stage 11 summary for future context loading.
+- Files:
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-10.md`
+  - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-11.md`
+- Verification:
+  - Manual review of the updated context files

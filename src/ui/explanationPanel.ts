@@ -1,8 +1,10 @@
 import * as vscode from "vscode";
 import {
   ChatTurn,
+  ExplanationGranularity,
   ExplanationResponse,
   GlossaryEntry,
+  ReasoningEffort,
   WorkspaceIndex
 } from "../contracts";
 
@@ -15,12 +17,17 @@ export interface ExplanationPanelState {
   isWatchingSelection?: boolean;
   currentFile?: string;
   currentSelectionLabel?: string;
+  currentGranularity?: ExplanationGranularity;
+  isLoading?: boolean;
+  reasoningEffort?: ReasoningEffort;
   lastUpdatedAt?: string;
 }
 
 type PanelMessage =
   | { type: "ready" }
-  | { type: "askQuestion"; question: string };
+  | { type: "askQuestion"; question: string }
+  | { type: "openSettings" }
+  | { type: "setReasoningEffort"; reasoningEffort: ReasoningEffort };
 
 export class ExplanationPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
@@ -152,6 +159,12 @@ export class ExplanationPanel implements vscode.Disposable {
         gap: 12px;
       }
 
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
       .title {
         font-size: 14px;
         font-weight: 600;
@@ -166,6 +179,20 @@ export class ExplanationPanel implements vscode.Disposable {
         background: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, transparent);
         color: var(--vscode-textLink-foreground);
         font-size: 11px;
+      }
+
+      .spinner {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        border: 2px solid color-mix(in srgb, var(--vscode-textLink-foreground) 18%, transparent);
+        border-top-color: var(--vscode-textLink-foreground);
+        animation: spin 0.7s linear infinite;
+        display: none;
+      }
+
+      .spinner.loading {
+        display: inline-block;
       }
 
       .meta {
@@ -223,6 +250,11 @@ export class ExplanationPanel implements vscode.Disposable {
         background: var(--vscode-button-secondaryHoverBackground);
       }
 
+      .chip.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+
       .list {
         display: grid;
         gap: 8px;
@@ -270,8 +302,21 @@ export class ExplanationPanel implements vscode.Disposable {
 
       .actions {
         display: flex;
-        justify-content: flex-end;
+        justify-content: space-between;
+        align-items: center;
         margin-top: 10px;
+        gap: 10px;
+      }
+
+      .chat-controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .chat-controls select {
+        min-width: 110px;
+        width: auto;
       }
 
       .primary {
@@ -290,6 +335,16 @@ export class ExplanationPanel implements vscode.Disposable {
       .empty {
         color: var(--vscode-descriptionForeground);
       }
+
+      @keyframes spin {
+        from {
+          transform: rotate(0deg);
+        }
+
+        to {
+          transform: rotate(360deg);
+        }
+      }
     </style>
   </head>
   <body>
@@ -298,7 +353,11 @@ export class ExplanationPanel implements vscode.Disposable {
         <div class="card-body">
           <div class="header">
             <div class="title">Read Code In Chinese</div>
-            <div id="watchBadge" class="badge">Manual</div>
+            <div class="header-actions">
+              <div id="loadingSpinner" class="spinner"></div>
+              <button class="chip" id="settingsButton" type="button">Settings</button>
+              <div id="watchBadge" class="badge">Manual</div>
+            </div>
           </div>
           <div id="meta" class="meta"></div>
         </div>
@@ -307,9 +366,13 @@ export class ExplanationPanel implements vscode.Disposable {
       <section class="card">
         <div class="card-body stack">
           <div>
-          <div class="label">Summary</div>
+            <div class="label">Summary</div>
             <div id="engineInfo" class="meta"></div>
             <div id="summary" class="summary empty">Select code and start an explanation.</div>
+          </div>
+          <div>
+            <div class="label">Detected Type</div>
+            <div id="granularityChips" class="chips"></div>
           </div>
           <div>
             <div class="label">Sections</div>
@@ -336,6 +399,15 @@ export class ExplanationPanel implements vscode.Disposable {
           <div id="chatHistory" class="list"></div>
           <textarea id="questionInput" placeholder="Ask a deeper question about the current code..."></textarea>
           <div class="actions">
+            <div class="chat-controls">
+              <span class="muted">Reasoning</span>
+              <select id="reasoningEffortSelect">
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+              </select>
+            </div>
             <button class="primary" id="sendButton">Send</button>
           </div>
         </div>
@@ -346,16 +418,21 @@ export class ExplanationPanel implements vscode.Disposable {
       const vscode = acquireVsCodeApi();
 
       const watchBadge = document.getElementById("watchBadge");
+      const loadingSpinner = document.getElementById("loadingSpinner");
+      const settingsButton = document.getElementById("settingsButton");
       const meta = document.getElementById("meta");
       const summary = document.getElementById("summary");
       const engineInfo = document.getElementById("engineInfo");
+      const granularityChips = document.getElementById("granularityChips");
       const sections = document.getElementById("sections");
       const suggestions = document.getElementById("suggestions");
       const glossary = document.getElementById("glossary");
       const workspaceIndex = document.getElementById("workspaceIndex");
       const chatHistory = document.getElementById("chatHistory");
       const questionInput = document.getElementById("questionInput");
+      const reasoningEffortSelect = document.getElementById("reasoningEffortSelect");
       const sendButton = document.getElementById("sendButton");
+      const granularityOrder = ["token", "statement", "block", "function", "file", "workspace"];
 
       function renderSection(section) {
         const wrapper = document.createElement("div");
@@ -427,6 +504,7 @@ export class ExplanationPanel implements vscode.Disposable {
 
         const explanation = payload.explanation;
         watchBadge.textContent = payload.isWatchingSelection ? "Watching selection" : "Manual";
+        loadingSpinner.className = payload.isLoading ? "spinner loading" : "spinner";
 
         const metaLines = [
           payload.statusMessage || "Ready.",
@@ -446,6 +524,15 @@ export class ExplanationPanel implements vscode.Disposable {
           explanation?.note ? "Note: " + explanation.note : ""
         ].filter(Boolean);
         engineInfo.innerHTML = engineLines.map((line) => '<div>' + line + '</div>').join("");
+
+        granularityChips.innerHTML = "";
+        for (const item of granularityOrder) {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "chip" + (payload.currentGranularity === item ? " active" : "");
+          chip.textContent = item;
+          granularityChips.appendChild(chip);
+        }
 
         sections.innerHTML = "";
         if (explanation?.sections?.length) {
@@ -500,11 +587,26 @@ export class ExplanationPanel implements vscode.Disposable {
         } else {
           renderEmpty(chatHistory, "No follow-up chat yet.");
         }
+
+        if (payload.reasoningEffort) {
+          reasoningEffortSelect.value = payload.reasoningEffort;
+        }
       });
 
       sendButton.addEventListener("click", () => {
         askQuestion(questionInput.value);
         questionInput.value = "";
+      });
+
+      settingsButton.addEventListener("click", () => {
+        vscode.postMessage({ type: "openSettings" });
+      });
+
+      reasoningEffortSelect.addEventListener("change", () => {
+        vscode.postMessage({
+          type: "setReasoningEffort",
+          reasoningEffort: reasoningEffortSelect.value
+        });
       });
 
       questionInput.addEventListener("keydown", (event) => {

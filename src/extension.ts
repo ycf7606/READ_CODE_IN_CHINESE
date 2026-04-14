@@ -13,18 +13,25 @@ import {
   ChatTurn,
   ExplanationRequest,
   ExplanationResponse,
+  ExplanationGranularity,
   GlossaryCacheFile,
   GlossaryEntry,
   WorkspaceIndex
 } from "./contracts";
 import { syncOfficialDocsForLanguage } from "./knowledge/officialDocs";
 import { KnowledgeStore } from "./knowledge/knowledgeStore";
+import {
+  buildSingleTokenKnowledge,
+  buildTokenKnowledgeBatch
+} from "./knowledge/tokenKnowledgeBuilder";
+import { TokenKnowledgeStore } from "./knowledge/tokenKnowledgeStore";
 import { ExtensionLogger } from "./logging/logger";
 import { createProvider } from "./providers/createProvider";
 import { ExplanationProvider } from "./providers/providerTypes";
 import { WorkspaceStore } from "./storage/workspaceStore";
 import { ExplanationPanel } from "./ui/explanationPanel";
 import { GlossaryTreeProvider } from "./ui/glossaryTreeProvider";
+import { SettingsPanel } from "./ui/settingsPanel";
 import { createContentHash } from "./utils/hash";
 
 interface SessionState {
@@ -33,6 +40,7 @@ interface SessionState {
   chatHistory: ChatTurn[];
   workspaceIndex?: WorkspaceIndex;
   glossaryEntries: GlossaryEntry[];
+  currentGranularity?: ExplanationGranularity;
 }
 
 interface ExplainSelectionOptions {
@@ -42,6 +50,7 @@ interface ExplainSelectionOptions {
 }
 
 const ACTIVE_GLOSSARY_VIEW = "readCodeInChinese.glossaryView";
+const DEFAULT_TOKEN_PREBUILD_LIMIT = 18;
 
 export function activate(context: vscode.ExtensionContext): void {
   const logger = new ExtensionLogger();
@@ -63,14 +72,49 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
+    if (message.type === "openSettings") {
+      settingsPanel.show(getSettings());
+      return;
+    }
+
+    if (message.type === "setReasoningEffort") {
+      await updateConfigurationValue(
+        "provider.reasoningEffort",
+        message.reasoningEffort,
+        vscode.ConfigurationTarget.Global
+      );
+      return;
+    }
+
     if (message.type === "askQuestion") {
       await answerFollowUp(message.question);
+    }
+  });
+  const settingsPanel = new SettingsPanel(async (message) => {
+    if (message.type === "ready") {
+      settingsPanel.show(getSettings());
+      return;
+    }
+
+    if (message.type === "buildTokenKnowledge") {
+      await buildTokenKnowledgeForActiveLanguage({
+        limit: DEFAULT_TOKEN_PREBUILD_LIMIT,
+        showNotifications: true
+      });
+      return;
+    }
+
+    if (message.type === "saveSettings") {
+      await saveSettingsFromPanel(message.payload);
+      settingsPanel.show(getSettings());
+      logger.info("Settings updated from settings panel", summarizeSettings(getSettings()));
     }
   });
 
   context.subscriptions.push(
     logger,
     panel,
+    settingsPanel,
     statusBarItem,
     vscode.window.registerTreeDataProvider(ACTIVE_GLOSSARY_VIEW, glossaryTreeProvider)
   );
@@ -150,6 +194,21 @@ export function activate(context: vscode.ExtensionContext): void {
       "readCodeInChinese.showLogs",
       () => {
         logger.show(false);
+      }
+    ),
+    vscode.commands.registerCommand(
+      "readCodeInChinese.openSettingsPanel",
+      () => {
+        settingsPanel.show(getSettings());
+      }
+    ),
+    vscode.commands.registerCommand(
+      "readCodeInChinese.buildTokenKnowledgeForActiveLanguage",
+      async () => {
+        await buildTokenKnowledgeForActiveLanguage({
+          limit: DEFAULT_TOKEN_PREBUILD_LIMIT,
+          showNotifications: true
+        });
       }
     )
   ];
@@ -233,6 +292,12 @@ export function activate(context: vscode.ExtensionContext): void {
   updateStatusBar(statusBarItem);
   syncPanelContext(vscode.window.activeTextEditor);
   void refreshGlossaryForActiveEditor(false);
+  if (!context.globalState.get<boolean>("readCodeInChinese.onboardingShown")) {
+    void context.globalState.update("readCodeInChinese.onboardingShown", true);
+    setTimeout(() => {
+      settingsPanel.show(getSettings());
+    }, 250);
+  }
 
   async function explainSelection(
     reason: "manual" | "auto",
@@ -279,11 +344,22 @@ export function activate(context: vscode.ExtensionContext): void {
 
       const { relativeFilePath, workspaceStore, knowledgeStore } = projectContext;
       await workspaceStore.ensureProjectDataDirectories();
+      const granularity = inferGranularity(
+        selectedText,
+        editor.selection.end.line - editor.selection.start.line + 1
+      );
+
+      if (options.revealPanel || panel.isWatchingSelection() || getSettings().autoOpenPanel) {
+        panel.show();
+      }
 
       panel.setState({
         isWatchingSelection: panel.isWatchingSelection(),
         currentFile: relativeFilePath,
         currentSelectionLabel: formatSelectionLabel(editor.selection),
+        currentGranularity: granularity,
+        isLoading: true,
+        reasoningEffort: getSettings().providerReasoningEffort,
         statusMessage:
           reason === "auto"
             ? "Watching selection and updating explanation..."
@@ -299,33 +375,102 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       sessionState.glossaryEntries = glossaryEntries;
       glossaryTreeProvider.setEntries(glossaryEntries);
+      const tokenKnowledgeStore = new TokenKnowledgeStore(workspaceStore, logger);
 
-      const request = await createExplanationRequest(
+      let request = await createExplanationRequest(
         editor,
         selectedText,
-        inferGranularity(
-          selectedText,
-          editor.selection.end.line - editor.selection.start.line + 1
-        ),
+        granularity,
         reason,
         glossaryEntries,
         knowledgeStore,
         relativeFilePath
       );
-      const provider = createProvider(getSettings(), logger);
-      const response = await runExplanationWithFallback(provider, request, logger);
+      let response: ExplanationResponse | undefined;
+
+      if (granularity === "token") {
+        const cachedToken = await tokenKnowledgeStore.find(
+          editor.document.languageId,
+          selectedText
+        );
+
+        if (cachedToken) {
+          logger.info("Token knowledge cache hit", {
+            languageId: editor.document.languageId,
+            term: selectedText
+          });
+          response = {
+            ...cachedToken.explanation,
+            requestId: request.requestId,
+            selectionText: selectedText,
+            granularity: "token",
+            source: "token-knowledge-cache",
+            latencyMs: 0,
+            note:
+              cachedToken.explanation.note ??
+              "Used cached token knowledge built from prior preprocessing."
+          };
+        } else {
+          const provider = createProvider(getSettings(), logger);
+          const builtToken = await buildSingleTokenKnowledge({
+            languageId: editor.document.languageId,
+            filePath: editor.document.uri.fsPath,
+            relativeFilePath,
+            term: selectedText,
+            settings: getSettings(),
+            glossaryEntries,
+            knowledgeStore,
+            tokenKnowledgeStore,
+            provider,
+            logger,
+            contextBefore: request.contextBefore,
+            contextAfter: request.contextAfter
+          });
+
+          if (builtToken) {
+            logger.info("Token knowledge built on demand", {
+              languageId: editor.document.languageId,
+              term: selectedText
+            });
+            response = {
+              ...builtToken,
+              requestId: request.requestId,
+              selectionText: selectedText,
+              granularity: "token",
+              source: builtToken.source,
+              latencyMs: builtToken.latencyMs,
+              note:
+                builtToken.note ??
+                "Prepared token knowledge with remote reasoning and cached it."
+            };
+          }
+        }
+      }
+
+      if (!response) {
+        const provider = createProvider(getSettings(), logger);
+        response = await runExplanationWithFallback(provider, request, logger);
+
+        if (granularity === "token" && response.source === "openai-compatible") {
+          await tokenKnowledgeStore.upsert(editor.document.languageId, selectedText, response);
+        }
+      }
 
       sessionState.request = request;
       sessionState.explanation = response;
+      sessionState.currentGranularity = granularity;
       sessionState.chatHistory = [];
       panel.setState({
         explanation: response,
         chatHistory: sessionState.chatHistory,
-        glossaryEntries,
+        glossaryEntries: glossaryEntries.length > 0 ? glossaryEntries : response.glossaryHints,
         workspaceIndex: sessionState.workspaceIndex,
         isWatchingSelection: panel.isWatchingSelection(),
         currentFile: relativeFilePath,
         currentSelectionLabel: formatSelectionLabel(editor.selection),
+        currentGranularity: granularity,
+        isLoading: false,
+        reasoningEffort: getSettings().providerReasoningEffort,
         lastUpdatedAt: new Date().toLocaleString(),
         statusMessage: `Source: ${response.source} | Latency: ${response.latencyMs} ms`
       });
@@ -425,6 +570,9 @@ export function activate(context: vscode.ExtensionContext): void {
           isWatchingSelection: panel.isWatchingSelection(),
           currentFile: relativeFilePath,
           currentSelectionLabel: "Entire file",
+          currentGranularity: "file",
+          isLoading: false,
+          reasoningEffort: getSettings().providerReasoningEffort,
           lastUpdatedAt: new Date().toLocaleString(),
           statusMessage: `Source: ${response.source} | Latency: ${response.latencyMs} ms`
         });
@@ -473,6 +621,9 @@ export function activate(context: vscode.ExtensionContext): void {
           workspaceIndex: index,
           isWatchingSelection: panel.isWatchingSelection(),
           currentFile: projectContext.relativeFilePath,
+          currentGranularity: "workspace",
+          isLoading: false,
+          reasoningEffort: getSettings().providerReasoningEffort,
           lastUpdatedAt: new Date().toLocaleString(),
           statusMessage: `Indexed ${index.files.length} files.`
         });
@@ -703,23 +854,35 @@ export function activate(context: vscode.ExtensionContext): void {
         await projectContext.workspaceStore.ensureProjectDataDirectories();
         const syncResult = await syncOfficialDocsForLanguage(editor.document.languageId, logger);
         await projectContext.knowledgeStore.upsertDocuments(syncResult.importedDocuments);
+        const tokenBuildResult = await buildTokenKnowledgeForEditor(
+          editor,
+          projectContext,
+          DEFAULT_TOKEN_PREBUILD_LIMIT,
+          false,
+          logger
+        );
         const failureSuffix = syncResult.failedSources.length
           ? ` Failed: ${syncResult.failedSources.length}.`
           : "";
+        const tokenSuffix = tokenBuildResult
+          ? ` Token knowledge built: ${tokenBuildResult.built}, skipped: ${tokenBuildResult.skipped}, failed: ${tokenBuildResult.failedTerms.length}.`
+          : "";
 
         panel.setState({
-          statusMessage: `Synced ${syncResult.importedDocuments.length} official docs for ${syncResult.label}.${failureSuffix}`,
+          statusMessage: `Synced ${syncResult.importedDocuments.length} official docs for ${syncResult.label}.${failureSuffix}${tokenSuffix}`,
           lastUpdatedAt: new Date().toLocaleString()
         });
 
         logger.info("Official docs synced", {
           languageId: editor.document.languageId,
           importedDocuments: syncResult.importedDocuments.length,
-          failedSources: syncResult.failedSources.length
+          failedSources: syncResult.failedSources.length,
+          tokenKnowledgeBuilt: tokenBuildResult?.built ?? 0,
+          tokenKnowledgeSkipped: tokenBuildResult?.skipped ?? 0
         });
 
         await vscode.window.showInformationMessage(
-          `Read Code In Chinese: synced ${syncResult.importedDocuments.length} official docs for ${syncResult.label}.${failureSuffix}`
+          `Read Code In Chinese: synced ${syncResult.importedDocuments.length} official docs for ${syncResult.label}.${failureSuffix}${tokenSuffix}`
         );
       }
     );
@@ -741,6 +904,8 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     panel.setState({
       chatHistory: sessionState.chatHistory,
+      isLoading: true,
+      reasoningEffort: getSettings().providerReasoningEffort,
       statusMessage: "Generating follow-up answer..."
     });
 
@@ -762,6 +927,8 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     panel.setState({
       chatHistory: sessionState.chatHistory,
+      isLoading: false,
+      reasoningEffort: getSettings().providerReasoningEffort,
       lastUpdatedAt: new Date().toLocaleString(),
       statusMessage: `Source: ${followUpResponse.source} | Latency: ${followUpResponse.latencyMs} ms`
     });
@@ -775,6 +942,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     panel.setState({
       isWatchingSelection: panel.isWatchingSelection(),
+      isLoading: false,
+      reasoningEffort: getSettings().providerReasoningEffort,
       statusMessage: message,
       currentFile: vscode.window.activeTextEditor
         ? getProjectContext(vscode.window.activeTextEditor.document, logger)?.relativeFilePath ??
@@ -792,12 +961,74 @@ export function activate(context: vscode.ExtensionContext): void {
 
   function syncPanelContext(editor: vscode.TextEditor | undefined): void {
     const projectContext = editor ? getProjectContext(editor.document, logger) : undefined;
+    const currentGranularity = inferCurrentGranularity(editor);
 
     panel.setState({
       isWatchingSelection: panel.isWatchingSelection(),
       currentFile: projectContext?.relativeFilePath ?? editor?.document.fileName,
-      currentSelectionLabel: editor ? formatSelectionLabel(editor.selection) : undefined
+      currentSelectionLabel: editor ? formatSelectionLabel(editor.selection) : undefined,
+      currentGranularity,
+      reasoningEffort: getSettings().providerReasoningEffort
     });
+  }
+
+  async function buildTokenKnowledgeForActiveLanguage(options: {
+    limit: number;
+    showNotifications: boolean;
+  }): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+
+    if (!editor) {
+      if (options.showNotifications) {
+        await vscode.window.showWarningMessage(
+          "Read Code In Chinese: open a file before building token knowledge."
+        );
+      }
+      return;
+    }
+
+    const projectContext = getProjectContext(editor.document, logger);
+
+    if (!projectContext) {
+      if (options.showNotifications) {
+        await vscode.window.showWarningMessage(
+          "Read Code In Chinese: token knowledge build requires an opened workspace folder."
+        );
+      }
+      return;
+    }
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Read Code In Chinese: building ${editor.document.languageId} token knowledge`,
+        cancellable: false
+      },
+      async (progress) => {
+        const result = await buildTokenKnowledgeForEditor(
+          editor,
+          projectContext,
+          options.limit,
+          options.showNotifications,
+          logger,
+          (current, total, term) => {
+            progress.report({
+              increment: total > 0 ? 100 / total : 100,
+              message: `[${current}/${total}] ${term}`
+            });
+          }
+        );
+
+        if (!result) {
+          return;
+        }
+
+        panel.setState({
+          statusMessage: `Token knowledge ready for ${result.languageId}: built ${result.built}, skipped ${result.skipped}, failed ${result.failedTerms.length}.`,
+          lastUpdatedAt: new Date().toLocaleString()
+        });
+      }
+    );
   }
 }
 
@@ -1134,10 +1365,142 @@ function summarizeSettings(settings: ReturnType<typeof getSettings>) {
     providerModel: settings.providerModel || "(empty)",
     providerApiKeyEnvVar: settings.providerApiKeyEnvVar,
     hasApiKey: Boolean(process.env[settings.providerApiKeyEnvVar]),
+    providerReasoningEffort: settings.providerReasoningEffort,
     detailLevel: settings.detailLevel,
     professionalLevel: settings.professionalLevel,
     sections: settings.sections,
     autoExplainEnabled: settings.autoExplainEnabled,
     autoOpenPanel: settings.autoOpenPanel
   };
+}
+
+function inferCurrentGranularity(
+  editor: vscode.TextEditor | undefined
+): ExplanationGranularity | undefined {
+  if (!editor || editor.selection.isEmpty) {
+    return undefined;
+  }
+
+  const selectedText = editor.document.getText(editor.selection).trim();
+
+  if (!selectedText) {
+    return undefined;
+  }
+
+  return inferGranularity(
+    selectedText,
+    editor.selection.end.line - editor.selection.start.line + 1
+  );
+}
+
+async function updateConfigurationValue(
+  key: string,
+  value: unknown,
+  target: vscode.ConfigurationTarget
+): Promise<void> {
+  const configuration = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+  await configuration.update(key, value, target);
+}
+
+async function saveSettingsFromPanel(payload: {
+  providerId: ReturnType<typeof getSettings>["providerId"];
+  providerBaseUrl: string;
+  providerModel: string;
+  providerApiKeyEnvVar: string;
+  providerTimeoutMs: number;
+  customInstructions: string;
+  userGoal: string;
+  detailLevel: ReturnType<typeof getSettings>["detailLevel"];
+  professionalLevel: ReturnType<typeof getSettings>["professionalLevel"];
+  sections: string[];
+  temperature: number;
+  topP: number;
+  maxTokens: number;
+  reasoningEffort: ReturnType<typeof getSettings>["providerReasoningEffort"];
+  autoExplainEnabled: boolean;
+}): Promise<void> {
+  const target = vscode.ConfigurationTarget.Global;
+  const configuration = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+
+  await Promise.all([
+    configuration.update("provider.id", payload.providerId, target),
+    configuration.update("provider.baseUrl", payload.providerBaseUrl, target),
+    configuration.update("provider.model", payload.providerModel, target),
+    configuration.update("provider.apiKeyEnvVar", payload.providerApiKeyEnvVar, target),
+    configuration.update("provider.timeoutMs", payload.providerTimeoutMs, target),
+    configuration.update("prompt.customInstructions", payload.customInstructions, target),
+    configuration.update("explanation.userGoal", payload.userGoal, target),
+    configuration.update("explanation.detailLevel", payload.detailLevel, target),
+    configuration.update("explanation.professionalLevel", payload.professionalLevel, target),
+    configuration.update("explanation.sections", payload.sections, target),
+    configuration.update("provider.temperature", payload.temperature, target),
+    configuration.update("provider.topP", payload.topP, target),
+    configuration.update("provider.maxTokens", payload.maxTokens, target),
+    configuration.update("provider.reasoningEffort", payload.reasoningEffort, target),
+    configuration.update("autoExplain.enabled", payload.autoExplainEnabled, target)
+  ]);
+
+  await vscode.window.showInformationMessage(
+    "Read Code In Chinese: settings saved."
+  );
+}
+
+async function buildTokenKnowledgeForEditor(
+  editor: vscode.TextEditor,
+  projectContext: {
+    workspaceRoot: string;
+    relativeFilePath: string;
+    workspaceStore: WorkspaceStore;
+    knowledgeStore: KnowledgeStore;
+  },
+  limit: number,
+  showNotifications: boolean,
+  logger?: ExtensionLogger,
+  onProgress?: (current: number, total: number, term: string) => void
+) {
+  await projectContext.workspaceStore.ensureProjectDataDirectories();
+  const settings = getSettings();
+  const provider = createProvider(settings, logger);
+
+  if (provider.id !== "openai-compatible") {
+    if (showNotifications) {
+      await vscode.window.showWarningMessage(
+        "Read Code In Chinese: token knowledge prebuild requires the OpenAI-compatible provider."
+      );
+    }
+    return undefined;
+  }
+
+  const glossaryEntries = await getOrCreateGlossary(
+    projectContext.workspaceStore,
+    editor.document,
+    projectContext.relativeFilePath,
+    false,
+    logger
+  );
+  const tokenKnowledgeStore = new TokenKnowledgeStore(projectContext.workspaceStore, logger);
+  const result = await buildTokenKnowledgeBatch({
+    languageId: editor.document.languageId,
+    filePath: editor.document.uri.fsPath,
+    relativeFilePath: projectContext.relativeFilePath,
+    settings,
+    glossaryEntries,
+    knowledgeStore: projectContext.knowledgeStore,
+    tokenKnowledgeStore,
+    provider,
+    preferredTerms: glossaryEntries.map((entry) => entry.term),
+    logger,
+    limit,
+    onProgress: onProgress
+      ? (payload) => onProgress(payload.current, payload.total, payload.term)
+      : undefined
+  });
+
+  if (showNotifications) {
+    await vscode.window.showInformationMessage(
+      `Read Code In Chinese: built ${result.built}, skipped ${result.skipped}, failed ${result.failedTerms.length} token entries for ${result.languageId}.`
+    );
+  }
+
+  return result;
 }

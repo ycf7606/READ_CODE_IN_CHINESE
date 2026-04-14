@@ -2,7 +2,7 @@
   "name": "read-code-in-chinese",
   "displayName": "Read Code In Chinese",
   "description": "VS Code extension for turning source code into concise Chinese explanations.",
-  "version": "0.3.1",
+  "version": "0.5.0",
   "publisher": "ycf7606",
   "license": "MPL-2.0",
   "repository": {
@@ -31,7 +31,9 @@
     "onCommand:readCodeInChinese.refreshGlossary",
     "onCommand:readCodeInChinese.importKnowledgeDocuments",
     "onCommand:readCodeInChinese.syncOfficialDocsForActiveLanguage",
-    "onCommand:readCodeInChinese.showLogs"
+    "onCommand:readCodeInChinese.showLogs",
+    "onCommand:readCodeInChinese.openSettingsPanel",
+    "onCommand:readCodeInChinese.buildTokenKnowledgeForActiveLanguage"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -75,6 +77,14 @@
       {
         "command": "readCodeInChinese.showLogs",
         "title": "Read Code In Chinese: Show Logs"
+      },
+      {
+        "command": "readCodeInChinese.openSettingsPanel",
+        "title": "Read Code In Chinese: Open Settings Panel"
+      },
+      {
+        "command": "readCodeInChinese.buildTokenKnowledgeForActiveLanguage",
+        "title": "Read Code In Chinese: Build Token Knowledge For Active Language"
       }
     ],
     "keybindings": [
@@ -179,6 +189,17 @@
           "default": 1200,
           "minimum": 64,
           "description": "Maximum output tokens for the OpenAI-compatible provider."
+        },
+        "readCodeInChinese.provider.reasoningEffort": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "default": "medium",
+          "description": "Reasoning effort level supported by the configured endpoint."
         },
         "readCodeInChinese.explanation.detailLevel": {
           "type": "string",

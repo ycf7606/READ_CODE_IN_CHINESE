@@ -7,6 +7,10 @@ export function buildExplainPrompts(request: ExplanationRequest): {
   system: string;
   user: string;
 } {
+  if (request.granularity === "token") {
+    return buildTokenExplainPrompts(request);
+  }
+
   const glossaryContext = request.glossaryEntries
     .slice(0, 12)
     .map((entry) => `- ${entry.term}: ${entry.meaning}`)
@@ -26,6 +30,7 @@ export function buildExplainPrompts(request: ExplanationRequest): {
       '{"title":"string","summary":"string","sections":[{"label":"string","content":"string"}],"suggestedQuestions":["string"],"glossaryHints":[{"term":"string","meaning":"string","category":"variable"}],"note":"string"}',
       "Keep each sentence short and useful.",
       "Do not include markdown fences.",
+      "Ground the answer in the selected code and nearby context.",
       request.customInstructions
     ].join(" "),
     user: [
@@ -47,6 +52,41 @@ export function buildExplainPrompts(request: ExplanationRequest): {
       "",
       "Glossary hints:",
       glossaryContext || "(none)",
+      "",
+      "Knowledge snippets:",
+      knowledgeContext || "(none)"
+    ].join("\n")
+  };
+}
+
+function buildTokenExplainPrompts(request: ExplanationRequest): {
+  system: string;
+  user: string;
+} {
+  const knowledgeContext = request.knowledgeSnippets
+    .map((snippet) => `- ${snippet.title}: ${snippet.excerpt}`)
+    .join("\n");
+
+  return {
+    system: [
+      "You explain a single code token in concise Chinese.",
+      "Return valid JSON only.",
+      "Use this shape:",
+      '{"title":"string","summary":"string","sections":[{"label":"string","content":"string"}],"suggestedQuestions":["string"],"glossaryHints":[{"term":"string","meaning":"string","category":"variable"}],"note":"string"}',
+      "Focus on the token's exact role at this callsite.",
+      "Avoid generic placeholder wording.",
+      request.customInstructions
+    ].join(" "),
+    user: [
+      `Language: ${request.languageId}`,
+      `Token: ${request.selectedText}`,
+      `Goal: ${request.userGoal || "Explain the exact meaning of this token."}`,
+      "",
+      "Callsite before:",
+      request.contextBefore || "(none)",
+      "",
+      "Callsite after:",
+      request.contextAfter || "(none)",
       "",
       "Knowledge snippets:",
       knowledgeContext || "(none)"

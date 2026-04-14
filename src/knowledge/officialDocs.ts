@@ -25,7 +25,7 @@ export interface OfficialDocsSyncResult {
 }
 
 const DEFAULT_HEADERS = {
-  "User-Agent": "READ_CODE_IN_CHINESE/0.3.0",
+  "User-Agent": "READ_CODE_IN_CHINESE/0.5.0",
   Accept: "text/html, text/plain, application/json",
   "Accept-Encoding": "identity"
 };

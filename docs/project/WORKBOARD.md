@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 9
-- Latest summary: `docs/project/summaries/2026-04-14-stage-9.md`
+- Latest completed milestone: Stage 11
+- Latest summary: `docs/project/summaries/2026-04-14-stage-11.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -34,6 +34,8 @@ Every future work session must read these files in order before making changes:
 | 7 | Open-source polish | Completed | Docs, tests, CI, and packaging polish |
 | 8 | Runtime polish and market-readiness | Completed | Logging, official docs sync, cleaner panel UX, prompt controls, and real API validation |
 | 9 | Provider reliability fix | Completed | Env-based provider resolution, clearer diagnostics, and local fallback repair |
+| 10 | Token workflow and settings UX | Completed | Token cache, onboarding settings, loading UI, granularity UI, and reasoning selector |
+| 11 | Token knowledge prebuild | Completed | Knowledge-grounded token prebuild, expanded settings, and real API validation |
 
 ## Completed Tasks
 
@@ -84,6 +86,17 @@ Every future work session must read these files in order before making changes:
 - [x] S9-03 Repair local and remote follow-up text corruption.
 - [x] S9-04 Update local dev env defaults for real provider testing across workspaces.
 - [x] S9-05 Produce the Stage 9 summary file.
+- [x] S10-01 Add token knowledge caching for repeated single-token explanations.
+- [x] S10-02 Add a first-run settings panel and settings command.
+- [x] S10-03 Add loading, granularity, and reasoning controls to the explanation panel.
+- [x] S10-04 Add retry and downgrade handling for unstable remote token responses.
+- [x] S10-05 Produce the Stage 10 summary file.
+- [x] S11-01 Add a token knowledge prebuild pipeline from synced docs and glossary seeds.
+- [x] S11-02 Add command and settings-panel access for token knowledge prebuild.
+- [x] S11-03 Auto-warm token knowledge after official docs sync.
+- [x] S11-04 Expand settings UI to cover provider controls in addition to prompt and hyperparameters.
+- [x] S11-05 Add tests and real smoke validation for the token prebuild workflow.
+- [x] S11-06 Produce the Stage 11 summary file.
 
 ## Current Todo
 
@@ -101,6 +114,8 @@ Every future work session must read these files in order before making changes:
 
 - The core extension workflow is implemented end-to-end and validated by compile, unit tests, remote provider smoke tests, and official docs sync smoke tests.
 - A Stage 9 fix closed the gap where VS Code schema defaults could hide env-based provider settings during development-host testing.
+- A Stage 10 update added a dedicated token explanation workflow and user-facing settings UI so token explanations are less template-like and more controllable.
+- A Stage 11 update turned token knowledge into a real prebuild workflow backed by synced docs plus remote reasoning, instead of only caching after first use.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

@@ -56,6 +56,53 @@ export class KnowledgeStore {
     });
   }
 
+  async listDocumentsForLanguage(languageId: string): Promise<KnowledgeDocument[]> {
+    const library = await this.workspaceStore.readKnowledgeLibrary();
+    const normalizedLanguageId = languageId.toLowerCase();
+
+    return library.documents.filter((document) => {
+      if (document.languageId?.toLowerCase() === normalizedLanguageId) {
+        return true;
+      }
+
+      return document.tags.some((tag) => tag.toLowerCase() === normalizedLanguageId);
+    });
+  }
+
+  async collectTokenCandidates(
+    languageId: string,
+    preferredTerms: string[],
+    limit: number
+  ): Promise<string[]> {
+    const documents = await this.listDocumentsForLanguage(languageId);
+    const rankedTerms = new Map<string, { term: string; score: number }>();
+
+    for (const term of preferredTerms) {
+      addRankedTerm(rankedTerms, term, 40);
+    }
+
+    for (const document of documents) {
+      for (const term of extractIdentifierTerms(document.title)) {
+        addRankedTerm(rankedTerms, term, 10);
+      }
+
+      for (const tag of document.tags) {
+        for (const term of extractIdentifierTerms(tag)) {
+          addRankedTerm(rankedTerms, term, 8);
+        }
+      }
+
+      for (const term of extractIdentifierTerms(document.content)) {
+        addRankedTerm(rankedTerms, term, 1);
+      }
+    }
+
+    return Array.from(rankedTerms.values())
+      .sort((left, right) => right.score - left.score || left.term.localeCompare(right.term))
+      .slice(0, limit)
+      .map((entry) => entry.term);
+  }
+
   async search(query: string, topK: number): Promise<KnowledgeSnippet[]> {
     const library = await this.workspaceStore.readKnowledgeLibrary();
     const queryTokens = tokenizeSearchText(query);
@@ -138,4 +185,104 @@ export class KnowledgeStore {
       sourceType: "imported"
     };
   }
+}
+
+const TOKEN_STOP_WORDS = new Set([
+  "about",
+  "after",
+  "before",
+  "briefly",
+  "chapter",
+  "code",
+  "current",
+  "default",
+  "details",
+  "document",
+  "docs",
+  "each",
+  "example",
+  "examples",
+  "false",
+  "first",
+  "following",
+  "guide",
+  "handbook",
+  "into",
+  "language",
+  "learn",
+  "manual",
+  "module",
+  "notes",
+  "overview",
+  "page",
+  "pages",
+  "reference",
+  "returns",
+  "section",
+  "should",
+  "shows",
+  "source",
+  "statement",
+  "syntax",
+  "their",
+  "these",
+  "this",
+  "through",
+  "title",
+  "true",
+  "using",
+  "value",
+  "values",
+  "where",
+  "while",
+  "with"
+]);
+
+function extractIdentifierTerms(content: string): string[] {
+  const terms = content.match(/\b[A-Za-z_][A-Za-z0-9_]{2,39}\b/g) ?? [];
+
+  return terms.filter((term) => {
+    const normalizedTerm = term.toLowerCase();
+
+    if (TOKEN_STOP_WORDS.has(normalizedTerm)) {
+      return false;
+    }
+
+    return !/^\d/.test(term);
+  });
+}
+
+function addRankedTerm(
+  rankedTerms: Map<string, { term: string; score: number }>,
+  term: string,
+  score: number
+): void {
+  const trimmedTerm = term.trim();
+
+  if (!trimmedTerm) {
+    return;
+  }
+
+  const normalizedTerm = trimmedTerm.toLowerCase();
+  const existing = rankedTerms.get(normalizedTerm);
+  const preferredTerm =
+    existing && isBetterDisplayTerm(existing.term, trimmedTerm) ? existing.term : trimmedTerm;
+  const displayBoost = /[A-Z_]/.test(trimmedTerm) ? 2 : 0;
+
+  rankedTerms.set(normalizedTerm, {
+    term: preferredTerm,
+    score: (existing?.score ?? 0) + score + displayBoost
+  });
+}
+
+function isBetterDisplayTerm(currentTerm: string, nextTerm: string): boolean {
+  if (/[A-Z_]/.test(currentTerm) && !/[A-Z_]/.test(nextTerm)) {
+    return true;
+  }
+
+  if (!/[A-Z_]/.test(currentTerm) && /[A-Z_]/.test(nextTerm)) {
+    return false;
+  }
+
+  return currentTerm.length <= nextTerm.length;
 }

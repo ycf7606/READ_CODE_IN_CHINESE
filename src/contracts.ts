@@ -1,5 +1,7 @@
 export type DetailLevel = "fast" | "balanced" | "deep";
 export type ProfessionalLevel = "beginner" | "intermediate" | "expert";
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type ProviderId = "local" | "openai-compatible";
 export type ExplanationGranularity =
   | "token"
   | "statement"
@@ -12,7 +14,8 @@ export type ExplanationReason =
   | "auto"
   | "fileOverview"
   | "workspaceIndex"
-  | "chat";
+  | "chat"
+  | "prebuild";
 export type ExplanationSectionName =
   | "summary"
   | "inputOutput"
@@ -32,7 +35,7 @@ export interface ExtensionSettings {
   autoExplainEnabled: boolean;
   autoExplainDelayMs: number;
   autoOpenPanel: boolean;
-  providerId: string;
+  providerId: ProviderId;
   providerBaseUrl: string;
   providerModel: string;
   providerApiKeyEnvVar: string;
@@ -40,6 +43,7 @@ export interface ExtensionSettings {
   providerTemperature: number;
   providerTopP: number;
   providerMaxTokens: number;
+  providerReasoningEffort: ReasoningEffort;
   detailLevel: DetailLevel;
   professionalLevel: ProfessionalLevel;
   sections: ExplanationSectionName[];
@@ -159,4 +163,18 @@ export interface WorkspaceFileSummary {
 export interface WorkspaceIndex {
   generatedAt: string;
   files: WorkspaceFileSummary[];
+}
+
+export interface TokenKnowledgeEntry {
+  languageId: string;
+  term: string;
+  normalizedTerm: string;
+  generatedAt: string;
+  updatedAt: string;
+  explanation: ExplanationResponse;
+}
+
+export interface TokenKnowledgeFile {
+  languageId: string;
+  entries: TokenKnowledgeEntry[];
 }

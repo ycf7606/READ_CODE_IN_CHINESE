@@ -3,6 +3,7 @@ import * as path from "path";
 import {
   GlossaryCacheFile,
   KnowledgeLibraryFile,
+  TokenKnowledgeFile,
   WorkspaceIndex
 } from "../contracts";
 import { slugifyRelativePath } from "../utils/hash";
@@ -15,6 +16,7 @@ export class WorkspaceStore {
       fs.mkdir(this.getProjectDataDirectory(), { recursive: true }),
       fs.mkdir(this.getGlossaryDirectory(), { recursive: true }),
       fs.mkdir(this.getKnowledgeDirectory(), { recursive: true }),
+      fs.mkdir(this.getTokenKnowledgeDirectory(), { recursive: true }),
       fs.mkdir(this.getReportDirectory(), { recursive: true })
     ]);
   }
@@ -35,6 +37,10 @@ export class WorkspaceStore {
     return path.join(this.getProjectDataDirectory(), "reports");
   }
 
+  getTokenKnowledgeDirectory(): string {
+    return path.join(this.getProjectDataDirectory(), "token-knowledge");
+  }
+
   getKnowledgeLibraryPath(): string {
     return path.join(this.getKnowledgeDirectory(), "library.json");
   }
@@ -45,6 +51,10 @@ export class WorkspaceStore {
 
   getWorkspaceIndexReportPath(): string {
     return path.join(this.getReportDirectory(), "workspace-index.md");
+  }
+
+  getTokenKnowledgePath(languageId: string): string {
+    return path.join(this.getTokenKnowledgeDirectory(), `${slugifyRelativePath(languageId)}.json`);
   }
 
   getGlossaryCachePath(relativeFilePath: string): string {
@@ -75,6 +85,19 @@ export class WorkspaceStore {
 
   async writeKnowledgeLibrary(library: KnowledgeLibraryFile): Promise<void> {
     await this.writeJson(this.getKnowledgeLibraryPath(), library);
+  }
+
+  async readTokenKnowledge(languageId: string): Promise<TokenKnowledgeFile> {
+    return (
+      (await this.readJson<TokenKnowledgeFile>(this.getTokenKnowledgePath(languageId))) ?? {
+        languageId,
+        entries: []
+      }
+    );
+  }
+
+  async writeTokenKnowledge(languageId: string, file: TokenKnowledgeFile): Promise<void> {
+    await this.writeJson(this.getTokenKnowledgePath(languageId), file);
   }
 
   async writeWorkspaceIndex(index: WorkspaceIndex): Promise<void> {

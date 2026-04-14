@@ -3,15 +3,17 @@ import {
   DetailLevel,
   ExplanationSectionName,
   ExtensionSettings,
-  ProfessionalLevel
+  ProviderId,
+  ProfessionalLevel,
+  ReasoningEffort
 } from "./contracts";
 
 export const CONFIG_NAMESPACE = "readCodeInChinese";
 
 export function getSettings(): ExtensionSettings {
   const configuration = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-  const inferredProviderId =
-    readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_ID") ??
+  const inferredProviderId: ProviderId =
+    (readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_ID") as ProviderId | undefined) ??
     (readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_BASE_URL") &&
     readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_MODEL")
       ? "openai-compatible"
@@ -38,7 +40,7 @@ export function getSettings(): ExtensionSettings {
       "ui.autoOpenPanel",
       readBooleanEnv("READ_CODE_IN_CHINESE_UI_AUTO_OPEN_PANEL") ?? true
     ),
-    providerId: getConfiguredValue<string>(
+    providerId: getConfiguredValue<ProviderId>(
       configuration,
       "provider.id",
       inferredProviderId
@@ -78,6 +80,12 @@ export function getSettings(): ExtensionSettings {
       configuration,
       "provider.maxTokens",
       readNumberEnv("READ_CODE_IN_CHINESE_PROVIDER_MAX_TOKENS") ?? 1200
+    ),
+    providerReasoningEffort: getConfiguredValue<ReasoningEffort>(
+      configuration,
+      "provider.reasoningEffort",
+      (readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_REASONING_EFFORT") as ReasoningEffort) ??
+        "medium"
     ),
     detailLevel: getConfiguredValue<DetailLevel>(
       configuration,

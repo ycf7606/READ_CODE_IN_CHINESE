@@ -144,52 +144,59 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
       this.settings.providerTimeoutMs
     );
 
-    this.logger?.info("Sending remote provider request", {
-      mode,
-      baseUrl,
-      model: this.settings.providerModel,
-      messageCount: messages.length,
-      temperature: this.settings.providerTemperature,
-      topP: this.settings.providerTopP,
-      maxTokens: this.settings.providerMaxTokens
-    });
-
     try {
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: this.settings.providerModel,
-          temperature: this.settings.providerTemperature,
-          top_p: this.settings.providerTopP,
-          max_tokens: this.settings.providerMaxTokens,
-          messages
-        }),
-        signal: controller.signal
-      });
+      const payloadCandidates = buildPayloadCandidates(this.settings, messages, mode);
+      let logicalAttempt = 0;
 
-      if (!response.ok) {
-        const errorText = await safeReadText(response);
-        throw new Error(
-          `Remote provider returned ${response.status} ${response.statusText}. ${shortenWhitespace(errorText)}`
-        );
+      for (let round = 0; round < 2; round += 1) {
+        for (const payloadBody of payloadCandidates) {
+          logicalAttempt += 1;
+          this.logger?.info("Sending remote provider request", {
+            mode,
+            attempt: logicalAttempt,
+            baseUrl,
+            model: this.settings.providerModel,
+            messageCount: messages.length,
+            temperature: payloadBody.temperature,
+            topP: payloadBody.top_p,
+            maxTokens: payloadBody.max_tokens,
+            reasoningEffort: payloadBody.reasoning_effort ?? "(omitted)",
+            hasResponseFormat: Boolean(payloadBody.response_format)
+          });
+
+          const response = await fetch(`${baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(payloadBody),
+            signal: controller.signal
+          });
+
+          if (!response.ok) {
+            const errorText = await safeReadText(response);
+            throw new Error(
+              `Remote provider returned ${response.status} ${response.statusText}. ${shortenWhitespace(errorText)}`
+            );
+          }
+
+          const payload = (await response.json()) as ChatCompletionResponse;
+          const content = extractMessageContent(payload.choices?.[0]);
+
+          if (content) {
+            return content;
+          }
+
+          this.logger?.warn("Remote provider returned a choice without message content", {
+            mode,
+            attempt: logicalAttempt,
+            payloadPreview: JSON.stringify(payload).slice(0, 500)
+          });
+        }
       }
 
-      const payload = (await response.json()) as ChatCompletionResponse;
-      const content = extractMessageContent(payload.choices?.[0]);
-
-      if (!content) {
-        this.logger?.warn("Remote provider returned a choice without message content", {
-          mode,
-          payloadPreview: JSON.stringify(payload).slice(0, 500)
-        });
-        throw new Error("Remote provider did not return a message content.");
-      }
-
-      return content;
+      throw new Error("Remote provider did not return a message content.");
     } catch (error) {
       this.logger?.error("Remote provider request failed", error);
       throw error;
@@ -197,6 +204,55 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
       clearTimeout(timeoutHandle);
     }
   }
+}
+
+function buildPayloadCandidates(
+  settings: ExtensionSettings,
+  messages: ChatCompletionMessage[],
+  mode: "explain" | "follow-up"
+): Array<Record<string, unknown>> {
+  const basePayload = {
+    model: settings.providerModel,
+    temperature: settings.providerTemperature,
+    top_p: settings.providerTopP,
+    max_tokens: settings.providerMaxTokens,
+    messages
+  };
+
+  if (mode === "follow-up") {
+    return [
+      {
+        ...basePayload,
+        reasoning_effort: settings.providerReasoningEffort
+      },
+      basePayload
+    ];
+  }
+
+  return [
+    {
+      ...basePayload,
+      reasoning_effort: settings.providerReasoningEffort,
+      response_format: { type: "json_object" }
+    },
+    {
+      ...basePayload,
+      response_format: { type: "json_object" }
+    },
+    {
+      ...basePayload,
+      temperature: 0,
+      response_format: { type: "json_object" }
+    },
+    {
+      ...basePayload,
+      reasoning_effort: settings.providerReasoningEffort
+    },
+    {
+      ...basePayload,
+      temperature: 0
+    }
+  ];
 }
 
 function parseJsonResponse(content: string): Record<string, unknown> {
@@ -240,7 +296,16 @@ function normalizeSections(value: unknown): Array<{ label: string; content: stri
       }
 
       const candidate = entry as { label?: unknown; content?: unknown };
-      const label = typeof candidate.label === "string" ? candidate.label.trim() : "section";
+      const heading =
+        "heading" in (entry as Record<string, unknown>)
+          ? (entry as Record<string, unknown>).heading
+          : undefined;
+      const label =
+        typeof candidate.label === "string"
+          ? candidate.label.trim()
+          : typeof heading === "string"
+            ? heading.trim()
+            : "section";
       const content = typeof candidate.content === "string" ? candidate.content.trim() : "";
 
       return { label, content };
@@ -281,11 +346,16 @@ function normalizeGlossaryHints(value: unknown): GlossaryEntry[] {
     const candidate = entry as {
       term?: unknown;
       meaning?: unknown;
+      hint?: unknown;
       category?: unknown;
     };
     const term = typeof candidate.term === "string" ? candidate.term.trim() : undefined;
     const meaning =
-      typeof candidate.meaning === "string" ? candidate.meaning.trim() : undefined;
+      typeof candidate.meaning === "string"
+        ? candidate.meaning.trim()
+        : typeof candidate.hint === "string"
+          ? candidate.hint.trim()
+          : undefined;
 
     if (!term || !meaning) {
       continue;

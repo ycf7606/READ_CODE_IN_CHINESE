@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 - 2026-04-14
+
+- Added a real token knowledge prebuild workflow that uses synced knowledge documents plus the remote model
+- Added `Read Code In Chinese: Build Token Knowledge For Active Language`
+- Auto-build token knowledge after official docs sync for the active language
+- Added on-demand token prebuild before falling back to generic token explanation flow
+- Expanded the settings panel to edit provider mode, base URL, model, API key env var, timeout, prompt controls, and token prebuild access
+- Added tests for token candidate extraction and token knowledge prebuild
+- Validated the new token prebuild path against the configured `gpt-5.4` endpoint
+
+## 0.4.0 - 2026-04-14
+
+- Added a first-run settings panel and a command to reopen it later
+- Added inline settings access, loading spinner, granularity display, and follow-up reasoning-effort selector in the explanation panel
+- Added workspace-local token knowledge caching for repeated single-token explanations
+- Switched token explanations to a dedicated shorter remote prompt
+- Added remote retry and payload downgrade logic for unstable `content: null` chat completion responses
+- Added `provider.reasoningEffort` configuration and endpoint-aware reasoning controls
+- Added tests for token knowledge caching
+
 ## 0.3.1 - 2026-04-14
 
 - Fixed provider configuration resolution so environment defaults can drive the development host even when testing against another workspace
