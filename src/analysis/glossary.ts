@@ -184,6 +184,20 @@ function addMemberFunctionEntries(
   }
 }
 
+function addQualifiedCallEntries(
+  map: Map<string, GlossaryEntry>,
+  line: string,
+  lineNumber: number
+): void {
+  for (const match of line.matchAll(
+    /(?:\b[A-Za-z_][A-Za-z0-9_]*\.)+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g
+  )) {
+    const term = match[1];
+    const category = /^[A-Z]/.test(term) ? "class" : "function";
+    addEntry(map, term, category, lineNumber);
+  }
+}
+
 export function extractGlossaryEntries(
   sourceCode: string,
   languageId: string,
@@ -208,6 +222,7 @@ export function extractGlossaryEntries(
     }
 
     addMemberFunctionEntries(glossaryMap, line, lineNumber);
+    addQualifiedCallEntries(glossaryMap, line, lineNumber);
 
     for (const match of line.matchAll(
       /\b(?:class|interface|type|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/g

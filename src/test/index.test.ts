@@ -80,6 +80,16 @@ test("extractGlossaryEntries includes python member function references", () => 
   assert.ok(glossaryEntries.some((entry) => entry.term === "forward" && entry.category === "function"));
 });
 
+test("extractGlossaryEntries includes qualified call symbols", () => {
+  const sourceCode = [
+    "self.m_k = nn.Parameter(torch.empty(1, self.m, inner_dim))"
+  ].join("\n");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "python");
+
+  assert.ok(glossaryEntries.some((entry) => entry.term === "Parameter" && entry.category === "class"));
+  assert.ok(glossaryEntries.some((entry) => entry.term === "empty" && entry.category === "function"));
+});
+
 test("attachWordbookScopePaths groups entries by class and function scope", () => {
   const sourceCode = [
     "class SpectralNet:",

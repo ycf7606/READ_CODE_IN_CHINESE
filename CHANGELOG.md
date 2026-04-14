@@ -2,6 +2,10 @@
 
 ## Unreleased - 2026-04-14
 
+- Added qualified-call symbol extraction so terms such as `Parameter` and `empty` from `nn.Parameter(...)` / `torch.empty(...)` can enter the wordbook pipeline
+- Removed the `Glossary Snapshot` panel block and stopped sending that unused payload to the webview
+- Added a prominent current-selection focus card at the top of the explanation page
+- Added basic markdown rendering for summaries, sections, wordbook entries, and follow-up chat so inline code, lists, and fenced code blocks render correctly
 - Hid batch counters during candidate-pool preparation and selection so the panel no longer shows misleading `0 / N` batch progress before real preprocessing starts
 - Added class-member function extraction for `self.xxx(...)`, `cls.xxx(...)`, and `this.xxx(...)` references so more file-local methods enter the wordbook candidate pool
 - Added scope-path annotation for wordbook entries and reorganized the wordbook tab into a compact collapsible tree grouped by classes and functions

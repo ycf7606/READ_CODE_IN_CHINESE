@@ -861,3 +861,50 @@
   - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-19.md`
 - Verification:
   - Manual review of the updated context files
+
+### S20-01 Add qualified API call symbol extraction
+
+- Stage: 20
+- Result: Added extraction for qualified call symbols such as `nn.Parameter(...)` and `torch.empty(...)`, so those callable names can participate in glossary generation and wordbook preprocessing.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\analysis\glossary.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\test\index.test.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S20-02 Add current-selection focus and markdown rendering
+
+- Stage: 20
+- Result: Added a prominent current-selection focus card at the top of the explanation page and basic markdown rendering for summaries, sections, wordbook entries, and follow-up chat.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S20-03 Remove glossary snapshot UI payload
+
+- Stage: 20
+- Result: Removed the `Glossary Snapshot` panel block and stopped sending its unused state payload into the webview.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S20-04 Publish the Stage 20 summary
+
+- Stage: 20
+- Result: Updated README, architecture docs, changelog, workboard, and created the Stage 20 summary for future context loading.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\COMPLETION_LOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-20.md`
+- Verification:
+  - Manual review of the updated context files

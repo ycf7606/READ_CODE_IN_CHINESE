@@ -584,6 +584,7 @@ export function activate(context: vscode.ExtensionContext): void {
         isWatchingSelection: panel.isWatchingSelection(),
         currentFile: relativeFilePath,
         currentSelectionLabel: formatSelectionLabel(editor.selection),
+        currentSelectionText: selectedText,
         currentGranularity: granularity,
         isLoading: true,
         reasoningEffort: getSettings().providerReasoningEffort,
@@ -684,12 +685,12 @@ export function activate(context: vscode.ExtensionContext): void {
       panel.setState({
         explanation: response,
         chatHistory: sessionState.chatHistory,
-        glossaryEntries: glossaryEntries.length > 0 ? glossaryEntries : response.glossaryHints,
         wordbookEntries: getVisibleWordbookEntries(editor),
         workspaceIndex: sessionState.workspaceIndex,
         isWatchingSelection: panel.isWatchingSelection(),
         currentFile: relativeFilePath,
         currentSelectionLabel: formatSelectionLabel(editor.selection),
+        currentSelectionText: selectedText,
         currentGranularity: granularity,
         isLoading: false,
         reasoningEffort: getSettings().providerReasoningEffort,
@@ -840,11 +841,11 @@ export function activate(context: vscode.ExtensionContext): void {
         panel.setState({
           explanation: response,
           chatHistory: [],
-          glossaryEntries,
           wordbookEntries: getVisibleWordbookEntries(editor),
           isWatchingSelection: panel.isWatchingSelection(),
           currentFile: relativeFilePath,
           currentSelectionLabel: "Entire file",
+          currentSelectionText: undefined,
           currentGranularity: "file",
           isLoading: false,
           reasoningEffort: getSettings().providerReasoningEffort,
@@ -897,6 +898,7 @@ export function activate(context: vscode.ExtensionContext): void {
           wordbookEntries: getVisibleWordbookEntries(editor),
           isWatchingSelection: panel.isWatchingSelection(),
           currentFile: projectContext.relativeFilePath,
+          currentSelectionText: undefined,
           currentGranularity: "workspace",
           isLoading: false,
           reasoningEffort: getSettings().providerReasoningEffort,
@@ -932,10 +934,10 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!editor) {
       glossaryTreeProvider.setEntries([]);
       panel.setState({
-        glossaryEntries: [],
         wordbookEntries: [],
         currentFile: undefined,
         currentSelectionLabel: undefined,
+        currentSelectionText: undefined,
         isWatchingSelection: panel.isWatchingSelection()
       });
       return;
@@ -946,10 +948,10 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!projectContext) {
       glossaryTreeProvider.setEntries([]);
       panel.setState({
-        glossaryEntries: [],
         wordbookEntries: [],
         currentFile: path.basename(editor.document.uri.fsPath),
         currentSelectionLabel: formatSelectionLabel(editor.selection),
+        currentSelectionText: readSelectionText(editor),
         isWatchingSelection: panel.isWatchingSelection()
       });
       return;
@@ -966,9 +968,9 @@ export function activate(context: vscode.ExtensionContext): void {
     sessionState.glossaryEntries = glossaryEntries;
     glossaryTreeProvider.setEntries(glossaryEntries);
     panel.setState({
-      glossaryEntries,
       currentFile: projectContext.relativeFilePath,
       currentSelectionLabel: formatSelectionLabel(editor.selection),
+      currentSelectionText: readSelectionText(editor),
       isWatchingSelection: panel.isWatchingSelection()
     });
   }
@@ -1029,7 +1031,6 @@ export function activate(context: vscode.ExtensionContext): void {
     sessionState.glossaryEntries = updatedEntries;
     glossaryTreeProvider.setEntries(updatedEntries);
     panel.setState({
-      glossaryEntries: updatedEntries,
       lastUpdatedAt: new Date().toLocaleString()
     });
 
@@ -1277,7 +1278,8 @@ export function activate(context: vscode.ExtensionContext): void {
         : undefined,
       currentSelectionLabel: getPreferredSourceEditor()
         ? formatSelectionLabel(getPreferredSourceEditor()!.selection)
-        : undefined
+        : undefined,
+      currentSelectionText: readSelectionText(getPreferredSourceEditor())
     });
 
     if (options.showWarnings) {
@@ -1387,6 +1389,7 @@ export function activate(context: vscode.ExtensionContext): void {
       isWatchingSelection: panel.isWatchingSelection(),
       currentFile: projectContext?.relativeFilePath ?? sourceEditor?.document.fileName,
       currentSelectionLabel: sourceEditor ? formatSelectionLabel(sourceEditor.selection) : undefined,
+      currentSelectionText: readSelectionText(sourceEditor),
       currentGranularity,
       wordbookEntries: getVisibleWordbookEntries(sourceEditor),
       reasoningEffort: getSettings().providerReasoningEffort,
@@ -2055,6 +2058,16 @@ function inferCurrentGranularity(
 
 function getRelativeFilePath(editor: vscode.TextEditor | undefined): string | undefined {
   return editor ? getProjectContext(editor.document)?.relativeFilePath : undefined;
+}
+
+function readSelectionText(editor: vscode.TextEditor | undefined): string | undefined {
+  if (!editor || editor.selection.isEmpty) {
+    return undefined;
+  }
+
+  const selectedText = editor.document.getText(editor.selection).trim();
+
+  return selectedText || undefined;
 }
 
 function getVisiblePreprocessProgress(
