@@ -33,10 +33,16 @@ export type GlossaryCategory =
   | "function"
   | "class"
   | "type"
+  | "label"
   | "import"
   | "constant"
   | "unknown";
-export type PreprocessedSymbolCategory = "variable" | "function" | "class" | "type";
+export type PreprocessedSymbolCategory =
+  | "variable"
+  | "function"
+  | "class"
+  | "type"
+  | "label";
 export type PreprocessStatus =
   | "idle"
   | "running"

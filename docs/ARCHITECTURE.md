@@ -27,7 +27,7 @@ The extension is designed to make source code easier to read by combining:
 
 ### `src/analysis/`
 
-- `glossary.ts`: extracts symbols and generates stable term meanings
+- `glossary.ts`: extracts symbols, Python assignments, and label-like string terms, then generates stable term meanings
 - `summary.ts`: infers granularity, builds local summaries, and suggests follow-up questions
 
 ### `src/providers/`
@@ -41,7 +41,7 @@ The extension is designed to make source code easier to read by combining:
 - `knowledgeStore.ts`: imports `.md`, `.txt`, and `.json` documents, stores them in workspace cache, and retrieves top keyword matches
 - `officialDocs.ts`: downloads preset official/reference language documents and chunks them into the knowledge library
 - `preprocessStore.ts`: stores file-scoped batches of user-defined symbol summaries
-- `symbolPreprocessBuilder.ts`: ranks glossary symbols, sends one full-file batch request, and writes the preprocess cache
+- `symbolPreprocessBuilder.ts`: selects audience-appropriate glossary symbols first, then sends one full-file batch request and writes the preprocess cache
 - `tokenKnowledgeStore.ts`: stores successful token-level explanations as a compatibility fallback cache
 - `tokenKnowledgeBuilder.ts`: older token-prebuild helper retained for compatibility paths
 
@@ -65,7 +65,7 @@ The extension is designed to make source code easier to read by combining:
 1. User selects code or runs a file/workspace command
 2. Extension loads settings, logger, and workspace services
 3. Settings resolution prefers explicit VS Code configuration, then falls back to environment variables for development-host testing
-4. If the panel is open, selection changes automatically trigger explanation refresh
+4. If the panel is open, selection changes automatically trigger explanation refresh without repeatedly re-revealing the panel
 5. Glossary cache is loaded or regenerated
 6. Knowledge snippets are retrieved from imported or synced documents
 7. If the selection is a token, the extension first checks the active file's preprocess cache
@@ -73,12 +73,13 @@ The extension is designed to make source code easier to read by combining:
 9. Explanation request is built with user goal, custom prompt instructions, selection-line preview, and provider hyperparameters
 10. Settings-panel prompt generation can call the configured provider to synthesize a reusable global prompt from the current user profile
 11. Local or remote provider returns a structured explanation grounded in the exact callsite context
-12. In the background, the extension can preprocess user-defined file symbols in one full-file batch
-13. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins
-14. Successful remote token explanations can still be written into the token knowledge cache
-15. Panel, glossary UI, visible wordbook, preprocess progress, and status metadata update
-16. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
-17. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
+12. In the background, the extension first selects audience-appropriate wordbook candidates from the current file glossary
+13. It then preprocesses only those selected symbols in one full-file batch using a dedicated wordbook prompt that ignores explanation sections
+14. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins
+15. Successful remote token explanations can still be written into the token knowledge cache
+16. Panel, glossary UI, visible wordbook, preprocess progress, and status metadata update
+17. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
+18. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 
@@ -105,4 +106,5 @@ Workspace-local cache directory:
 - provider-backed global prompt generation with editable final text
 - VS Code-native, low-noise UI
 - faster repeated symbol explanations through file-scoped preprocessing and caching
+- audience-aware wordbook selection so experts skip overly common symbols while beginners see more guidance
 - correctness over stale work by canceling outdated tasks quickly

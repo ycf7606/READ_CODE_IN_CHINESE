@@ -548,3 +548,52 @@
 - Verification:
   - `npm.cmd test`
   - Real remote `squeeze` explanation smoke test through `dist/providers/openAICompatibleProvider.js`
+
+### S14-01 Add audience-aware wordbook candidate selection
+
+- Stage: 14
+- Result: File preprocessing now first selects wordbook candidates from the glossary using audience-aware filtering before sending the batch preprocess request.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\analysis\preprocess.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\knowledge\symbolPreprocessBuilder.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S14-02 Expand glossary coverage for variables and labels
+
+- Stage: 14
+- Result: Glossary extraction now includes Python-assigned variables, instance attributes, and label-like string terms such as class names so they can enter the file wordbook.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\analysis\glossary.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\contracts.ts`
+- Verification:
+  - `npm.cmd test`
+  - Real preprocess smoke test through `dist/providers/openAICompatibleProvider.js`
+
+### S14-03 Isolate wordbook prompt shaping and reduce focus disruption
+
+- Stage: 14
+- Result: Preprocess prompt shaping now ignores explanation section preferences, and watched selection updates no longer keep re-revealing the panel when it is already open.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\prompts\globalPromptProfile.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\prompts\openAICompatiblePrompt.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S14-04 Publish Stage 14 tracking and smoke results
+
+- Stage: 14
+- Result: Updated repository docs and project tracking, then validated that beginner preprocessing includes `forward` while expert preprocessing skips it and still keeps `PCA` / `ICA` label entries.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-14.md`
+- Verification:
+  - `npm.cmd test`
+  - Real preprocess smoke test through `dist/providers/openAICompatibleProvider.js`

@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 13
-- Latest summary: `docs/project/summaries/2026-04-14-stage-13.md`
+- Latest completed milestone: Stage 14
+- Latest summary: `docs/project/summaries/2026-04-14-stage-14.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -38,6 +38,7 @@ Every future work session must read these files in order before making changes:
 | 11 | Token knowledge prebuild | Completed | Knowledge-grounded token prebuild, expanded settings, and real API validation |
 | 12 | File preprocess and cancellation | Completed | File-scoped symbol preprocessing, stale-request cancellation, grounded token prompts, and settings persistence hardening |
 | 13 | Dictionary UX and prompt generation | Completed | Visible file wordbook, remote prompt-profile generation, concise bullet rendering, and real provider validation |
+| 14 | Audience-aware wordbook preprocessing | Completed | Two-step candidate selection, label coverage, preprocess prompt isolation, and focus-safe watched updates |
 
 ## Completed Tasks
 
@@ -110,6 +111,12 @@ Every future work session must read these files in order before making changes:
 - [x] S13-04 Load and refresh wordbook state on activation, editor switch, save, and preprocess completion.
 - [x] S13-05 Add tests for prompt-profile generation and remote section-item normalization.
 - [x] S13-06 Produce the Stage 13 summary file.
+- [x] S14-01 Split preprocessing into audience-aware candidate selection and batch wordbook generation.
+- [x] S14-02 Expand glossary and preprocessing coverage to include Python-assigned variables and string-form labels.
+- [x] S14-03 Isolate preprocess prompt shaping from explanation section preferences.
+- [x] S14-04 Stop watched updates from repeatedly re-revealing the panel and pulling focus away from the source editor.
+- [x] S14-05 Add tests and real smoke validation for the new wordbook candidate pipeline.
+- [x] S14-06 Produce the Stage 14 summary file.
 
 ## Current Todo
 
@@ -131,6 +138,7 @@ Every future work session must read these files in order before making changes:
 - A Stage 11 update turned token knowledge into a real prebuild workflow backed by synced docs plus remote reasoning, instead of only caching after first use.
 - A Stage 12 update replaced the broad token prebuild behavior with file-scoped symbol preprocessing, added stale-task cancellation, and improved single-token prompt grounding with exact callsite previews.
 - A Stage 13 update exposed the file preprocess cache as a visible wordbook, switched settings prompt generation to the remote provider when available, and tightened the UI around concise dictionary-style bullet output.
+- A Stage 14 update made preprocessing audience-aware, added label/string coverage, isolated the wordbook prompt from explanation sections, and reduced focus disruption while the panel watches selection changes.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

@@ -61,6 +61,28 @@ export function generateGlobalPrompt(input: GlobalPromptProfileInput): string {
   ].join(" ");
 }
 
+export function generatePreprocessAudiencePrompt(
+  input: Pick<
+    GlobalPromptProfileInput,
+    "occupation" | "professionalLevel" | "detailLevel" | "userGoal"
+  >
+): string {
+  return [
+    "Build a file-local wordbook for source code in concise Chinese.",
+    OCCUPATION_DESCRIPTION[input.occupation],
+    PROFESSIONAL_DESCRIPTION[input.professionalLevel],
+    DETAIL_DESCRIPTION[input.detailLevel],
+    input.userGoal
+      ? `The user's current goal is: ${input.userGoal.trim()}.`
+      : "The default goal is to help the user understand file-local symbols quickly.",
+    "Return only one short sentence per symbol.",
+    "Treat each result as a glossary entry, not a full translation.",
+    "Focus on the symbol's role in the current file and nearby logic.",
+    "Do not expand into sections such as summary, input/output, usage, syntax, or risk.",
+    "Use simpler wording for beginners and tighter wording for experts."
+  ].join(" ");
+}
+
 export function buildPromptProfileGenerationPrompts(
   input: PromptProfileRequest
 ): { system: string; user: string } {

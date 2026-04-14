@@ -1,7 +1,4 @@
-import {
-  GlossaryCategory,
-  GlossaryEntry
-} from "../contracts";
+import { GlossaryCategory, GlossaryEntry } from "../contracts";
 import { humanizeIdentifier } from "../utils/text";
 
 const COMMON_KEYWORDS = new Set([
@@ -49,6 +46,20 @@ const COMMON_KEYWORDS = new Set([
   "of"
 ]);
 
+const LABEL_CONTEXT_PATTERN =
+  /\b(?:class|label|categor(?:y|ies)|target|name|type|tag)[A-Za-z_]*\b/i;
+
+const CATEGORY_PRIORITY: Record<GlossaryCategory, number> = {
+  unknown: 0,
+  import: 1,
+  constant: 2,
+  variable: 3,
+  function: 4,
+  class: 4,
+  type: 4,
+  label: 5
+};
+
 function buildMeaning(term: string, category: GlossaryCategory): string {
   const phrase = humanizeIdentifier(term) || term.toLowerCase();
 
@@ -75,6 +86,8 @@ function buildMeaning(term: string, category: GlossaryCategory): string {
       return `Class that models ${phrase}.`;
     case "type":
       return `Type definition for ${phrase}.`;
+    case "label":
+      return `Label or category name "${term}" used in the current file.`;
     case "import":
       return `Imported symbol for ${phrase}.`;
     case "constant":
@@ -92,28 +105,73 @@ function addEntry(
   category: GlossaryCategory,
   sourceLine: number
 ): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(term) || COMMON_KEYWORDS.has(term)) {
+  const trimmedTerm = term.trim();
+  const isLabel = category === "label";
+  const isValidTerm = isLabel
+    ? /^[A-Za-z][A-Za-z0-9_-]*$/.test(trimmedTerm)
+    : /^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmedTerm);
+
+  if (!isValidTerm || COMMON_KEYWORDS.has(trimmedTerm.toLowerCase())) {
     return;
   }
 
-  const normalizedTerm = term.toLowerCase();
+  const normalizedTerm = trimmedTerm.toLowerCase();
   const existingEntry = map.get(normalizedTerm);
 
   if (existingEntry) {
     existingEntry.references += 1;
+    if (!existingEntry.sourceLine && sourceLine > 0) {
+      existingEntry.sourceLine = sourceLine;
+    }
+    if (CATEGORY_PRIORITY[category] > CATEGORY_PRIORITY[existingEntry.category]) {
+      existingEntry.category = category;
+      existingEntry.meaning = buildMeaning(existingEntry.term, category);
+    }
     return;
   }
 
   map.set(normalizedTerm, {
-    term,
+    term: trimmedTerm,
     normalizedTerm,
-    meaning: buildMeaning(term, category),
+    meaning: buildMeaning(trimmedTerm, category),
     category,
     sourceLine,
     references: 1,
     source: "generated",
     updatedAt: new Date().toISOString()
   });
+}
+
+function addStringLabelEntries(
+  map: Map<string, GlossaryEntry>,
+  line: string,
+  lineNumber: number
+): void {
+  if (!LABEL_CONTEXT_PATTERN.test(line)) {
+    return;
+  }
+
+  for (const match of line.matchAll(/['"`]([A-Za-z][A-Za-z0-9_-]{1,40})['"`]/g)) {
+    addEntry(map, match[1], "label", lineNumber);
+  }
+}
+
+function addPythonAssignmentEntries(
+  map: Map<string, GlossaryEntry>,
+  line: string,
+  lineNumber: number
+): void {
+  if (/^\s*(def|class)\b/.test(line)) {
+    return;
+  }
+
+  for (const match of line.matchAll(/(?:^|[\s,(])([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?![=>=])/g)) {
+    addEntry(map, match[1], "variable", lineNumber);
+  }
+
+  for (const match of line.matchAll(/\b(?:self|cls)\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g)) {
+    addEntry(map, match[1], "variable", lineNumber);
+  }
 }
 
 export function extractGlossaryEntries(
@@ -128,6 +186,10 @@ export function extractGlossaryEntries(
     const lineNumber = index + 1;
 
     for (const match of line.matchAll(/\b(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      addEntry(glossaryMap, match[1], "variable", lineNumber);
+    }
+
+    for (const match of line.matchAll(/\b(?:this|self)\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g)) {
       addEntry(glossaryMap, match[1], "variable", lineNumber);
     }
 
@@ -157,10 +219,14 @@ export function extractGlossaryEntries(
       addEntry(glossaryMap, match[1], "constant", lineNumber);
     }
 
+    addStringLabelEntries(glossaryMap, line, lineNumber);
+
     if (languageId === "python") {
       for (const match of line.matchAll(/\bdef\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
         addEntry(glossaryMap, match[1], "function", lineNumber);
       }
+
+      addPythonAssignmentEntries(glossaryMap, line, lineNumber);
     }
   }
 

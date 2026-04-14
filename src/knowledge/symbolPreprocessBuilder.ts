@@ -11,6 +11,7 @@ import {
 } from "../contracts";
 import { buildPreprocessCandidates } from "../analysis/preprocess";
 import { ExtensionLogger } from "../logging/logger";
+import { generatePreprocessAudiencePrompt } from "../prompts/globalPromptProfile";
 import { ExplanationProvider } from "../providers/providerTypes";
 import { WorkspaceStore } from "../storage/workspaceStore";
 import { createContentHash } from "../utils/hash";
@@ -23,6 +24,7 @@ export interface BuildSymbolPreprocessOptions {
   relativeFilePath: string;
   settings: ExtensionSettings;
   glossaryEntries: GlossaryEntry[];
+  candidates?: PreprocessedSymbolCandidate[];
   workspaceStore: WorkspaceStore;
   provider: ExplanationProvider;
   logger?: ExtensionLogger;
@@ -77,11 +79,13 @@ export async function buildSymbolPreprocessCache(
   const preprocessStore = new PreprocessStore(options.workspaceStore);
   const sourceHash = createContentHash(options.editorText);
   const existingCache = await preprocessStore.read(options.relativeFilePath);
-  const candidates = buildPreprocessCandidates(
-    options.glossaryEntries,
-    options.settings.professionalLevel,
-    options.settings.occupation
-  );
+  const candidates =
+    options.candidates ??
+    buildPreprocessCandidates(
+      options.glossaryEntries,
+      options.settings.professionalLevel,
+      options.settings.occupation
+    );
 
   if (existingCache && existingCache.sourceHash === sourceHash) {
     options.onProgress?.(
@@ -93,7 +97,9 @@ export async function buildSymbolPreprocessCache(
         options.relativeFilePath,
         {
           completedAt: new Date().toISOString(),
-          message: `Preprocessed ${existingCache.entries.length} symbols from cache.`
+          completedSteps: 4,
+          currentStep: "Completed",
+          message: `Selected ${candidates.length} wordbook terms and loaded ${existingCache.entries.length} cached entries.`
         }
       )
     );
@@ -117,7 +123,9 @@ export async function buildSymbolPreprocessCache(
     options.onProgress?.(
       createProgress("completed", 0, 0, sourceHash, options.relativeFilePath, {
         completedAt: new Date().toISOString(),
-        message: "No user-defined symbols need preprocessing in this file."
+        completedSteps: 4,
+        currentStep: "Completed",
+        message: "No file-local symbols need preprocessing for the current audience."
       })
     );
 
@@ -130,8 +138,9 @@ export async function buildSymbolPreprocessCache(
 
   options.onProgress?.(
     createProgress("running", candidates.length, 0, sourceHash, options.relativeFilePath, {
-      currentStep: "Preparing symbol batch",
-      message: `Found ${candidates.length} symbols to preprocess.`
+      completedSteps: 2,
+      currentStep: "Sending batch request",
+      message: `Selected ${candidates.length} wordbook terms and started 1 batch request.`
     })
   );
 
@@ -153,16 +162,13 @@ export async function buildSymbolPreprocessCache(
     sourceCode: options.editorText,
     candidates,
     userGoal: options.settings.userGoal,
-    customInstructions: options.settings.customInstructions
-  };
-
-  options.onProgress?.(
-    createProgress("running", candidates.length, 0, sourceHash, options.relativeFilePath, {
-      completedSteps: 1,
-      currentStep: "Sending batch request",
-      message: `Processing ${candidates.length} symbols in 1 batch.`
+    customInstructions: generatePreprocessAudiencePrompt({
+      occupation: options.settings.occupation,
+      professionalLevel: options.settings.professionalLevel,
+      detailLevel: options.settings.detailLevel,
+      userGoal: options.settings.userGoal
     })
-  );
+  };
 
   const response = await options.provider.preprocessSymbols(request, {
     signal: options.signal
@@ -202,9 +208,9 @@ export async function buildSymbolPreprocessCache(
       sourceHash,
       options.relativeFilePath,
       {
-        completedSteps: 2,
+        completedSteps: 3,
         currentStep: "Saving cache",
-        message: `Saving ${normalizedEntries.length} symbol explanations.`
+        message: `Saving ${normalizedEntries.length} wordbook entries.`
       }
     )
   );
@@ -226,9 +232,9 @@ export async function buildSymbolPreprocessCache(
       options.relativeFilePath,
       {
         completedAt: new Date().toISOString(),
-        completedSteps: 3,
+        completedSteps: 4,
         currentStep: "Completed",
-        message: `Preprocessed ${normalizedEntries.length} symbols.`
+        message: `Preprocessed ${normalizedEntries.length} wordbook entries.`
       }
     )
   );
@@ -248,6 +254,8 @@ function toCategoryLabel(category: PreprocessedSymbolCandidate["category"]): str
       return "类";
     case "type":
       return "类型";
+    case "label":
+      return "标签名";
     default:
       return "变量";
   }
@@ -265,8 +273,8 @@ function createProgress(
     status,
     totalCandidates,
     processedCandidates,
-    totalSteps: 3,
-    completedSteps: status === "completed" ? 3 : 0,
+    totalSteps: 4,
+    completedSteps: status === "completed" ? 4 : 0,
     batchCount: totalCandidates > 0 ? 1 : 0,
     relativeFilePath,
     sourceHash,

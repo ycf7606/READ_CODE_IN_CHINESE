@@ -176,15 +176,18 @@ More detail: `docs/knowledge/IMPORTING_KNOWLEDGE.md`
 
 ## File Symbol Preprocessing
 
-When the remote provider is enabled, the extension can preprocess the active file's user-defined variables, functions, classes, and types in one batch using full-file context.
+When the remote provider is enabled, the extension can preprocess the active file's user-defined variables, functions, classes, types, and string-form labels in one batch using full-file context.
 
 - Preprocess cache path: `.read-code-in-chinese/preprocess/<file>.json`
 - Command: `Read Code In Chinese: Preprocess Current File Symbols`
-- Candidate scope adapts to `professionalLevel` and `occupation`
+- Candidate scope is selected in a first pass using `professionalLevel` and `occupation`
+- The second pass preprocesses only those selected candidates into short wordbook-style entries
+- Preprocess prompt shaping ignores explanation section preferences such as `summary`, `usage`, or `risk`
 - The explanation panel shows total symbol count, batch count, and progress
 - The explanation panel also shows a visible file wordbook sourced from the current file preprocess cache
 - Single-symbol explanations first check this file-level preprocess cache before hitting the model again
 - If the user changes selection while a request is still running, the older request is aborted and the newest selection wins
+- While the panel watches selections, explanation updates no longer keep re-revealing the panel and pulling focus away from the source editor
 
 ## Token Knowledge Cache
 

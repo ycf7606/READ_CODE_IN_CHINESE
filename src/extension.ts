@@ -465,7 +465,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ...(sessionState.preprocessProgress ?? {
           totalCandidates: 0,
           processedCandidates: 0,
-          totalSteps: 3,
+          totalSteps: 4,
           completedSteps: 0,
           batchCount: 0,
           startedAt: new Date().toISOString()
@@ -563,8 +563,10 @@ export function activate(context: vscode.ExtensionContext): void {
         editor.selection.end.line - editor.selection.start.line + 1
       );
       const sourceHash = createContentHash(editor.document.getText());
+      const shouldRevealPanel =
+        options.revealPanel || (!panel.isWatchingSelection() && getSettings().autoOpenPanel);
 
-      if (options.revealPanel || panel.isWatchingSelection() || getSettings().autoOpenPanel) {
+      if (shouldRevealPanel) {
         panel.show();
       }
 
@@ -694,7 +696,7 @@ export function activate(context: vscode.ExtensionContext): void {
         knowledgeUsed: response.knowledgeUsed
       });
 
-      if (options.revealPanel || getSettings().autoOpenPanel || panel.isWatchingSelection()) {
+      if (shouldRevealPanel) {
         panel.show();
         syncPanelContext(editor);
       }
@@ -1390,7 +1392,7 @@ export function activate(context: vscode.ExtensionContext): void {
       setWordbookState(projectContext.relativeFilePath, sourceHash, []);
     }
 
-    if (showNotifications) {
+    if (showNotifications && !panel.isVisible()) {
       panel.show();
     }
 
@@ -1413,12 +1415,12 @@ export function activate(context: vscode.ExtensionContext): void {
         status: "running",
         totalCandidates: previewCandidates.length,
         processedCandidates: 0,
-        totalSteps: 3,
-        completedSteps: 0,
+        totalSteps: 4,
+        completedSteps: 1,
         batchCount: previewCandidates.length > 0 ? 1 : 0,
         relativeFilePath: projectContext.relativeFilePath,
-        currentStep: "Preparing symbol batch",
-        message: `Found ${previewCandidates.length} symbols to preprocess.`,
+        currentStep: "Selecting wordbook terms",
+        message: `Selected ${previewCandidates.length} symbols for the current audience profile.`,
         startedAt: new Date().toISOString()
       };
       panel.setState({
@@ -1433,6 +1435,7 @@ export function activate(context: vscode.ExtensionContext): void {
         relativeFilePath: projectContext.relativeFilePath,
         settings: getSettings(),
         glossaryEntries,
+        candidates: previewCandidates,
         workspaceStore: projectContext.workspaceStore,
         provider,
         logger,
@@ -1487,7 +1490,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ...(sessionState.preprocessProgress ?? {
           totalCandidates: 0,
           processedCandidates: 0,
-          totalSteps: 3,
+          totalSteps: 4,
           completedSteps: 0,
           batchCount: 0,
           startedAt: new Date().toISOString()

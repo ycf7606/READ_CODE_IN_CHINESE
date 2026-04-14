@@ -18,7 +18,10 @@ import {
   buildSymbolPreprocessCache
 } from "../knowledge/symbolPreprocessBuilder";
 import { TokenKnowledgeStore } from "../knowledge/tokenKnowledgeStore";
-import { generateGlobalPrompt } from "../prompts/globalPromptProfile";
+import {
+  generateGlobalPrompt,
+  generatePreprocessAudiencePrompt
+} from "../prompts/globalPromptProfile";
 import { buildExplainPrompts } from "../prompts/openAICompatiblePrompt";
 import { LocalExplanationProvider } from "../providers/localProvider";
 import { OpenAICompatibleProvider } from "../providers/openAICompatibleProvider";
@@ -41,6 +44,19 @@ test("extractGlossaryEntries finds key symbols", () => {
 
   assert.ok(glossaryEntries.some((entry) => entry.term === "userCount"));
   assert.ok(glossaryEntries.some((entry) => entry.term === "loadUsers"));
+});
+
+test("extractGlossaryEntries includes python variables and label strings", () => {
+  const sourceCode = [
+    "class_names = ['PCA', 'ICA']",
+    "feature_map = build_map(data)",
+    "self.hidden_size = 128"
+  ].join("\n");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "python");
+
+  assert.ok(glossaryEntries.some((entry) => entry.term === "feature_map"));
+  assert.ok(glossaryEntries.some((entry) => entry.term === "hidden_size"));
+  assert.ok(glossaryEntries.some((entry) => entry.term === "PCA" && entry.category === "label"));
 });
 
 test("inferGranularity distinguishes token, function, and block", () => {
@@ -151,6 +167,8 @@ test("preprocess candidate builder focuses on user-defined symbols", () => {
       "const n = values.length;",
       "const featureMap = buildFeatureMap(values);",
       "function buildFeatureMap(input) { return input; }",
+      "function forward(input) { return input; }",
+      "const classNames = ['PCA', 'ICA'];",
       "class EmbeddingModel {}"
     ].join("\n"),
     "typescript"
@@ -161,7 +179,9 @@ test("preprocess candidate builder focuses on user-defined symbols", () => {
 
   assert.ok(beginner.some((entry) => entry.term === "featureMap"));
   assert.ok(beginner.some((entry) => entry.term === "buildFeatureMap"));
+  assert.ok(beginner.some((entry) => entry.term === "PCA"));
   assert.ok(!beginner.some((entry) => entry.term === "torch"));
+  assert.ok(!expert.some((entry) => entry.term === "forward"));
   assert.ok(beginner.length >= expert.length);
 });
 
@@ -280,7 +300,7 @@ test("symbol preprocess builder writes batch results into file cache", async () 
   assert.ok(result);
   assert.ok((cached?.entries.length ?? 0) >= 2);
   assert.ok(cached?.entries.some((entry) => entry.summary === "featureMap summary"));
-  assert.ok(progressSnapshots.includes("completed:3"));
+  assert.ok(progressSnapshots.includes("completed:4"));
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 
@@ -374,6 +394,19 @@ test("global prompt generator reflects audience profile", () => {
 
   assert.match(prompt, /teaching-style/i);
   assert.match(prompt, /Understand ML training code/);
+});
+
+test("preprocess prompt generator ignores explanation sections", () => {
+  const prompt = generatePreprocessAudiencePrompt({
+    occupation: "student",
+    professionalLevel: "beginner",
+    detailLevel: "balanced",
+    userGoal: "Build a quick wordbook for this file"
+  });
+
+  assert.match(prompt, /one short sentence per symbol/i);
+  assert.match(prompt, /do not expand into sections/i);
+  assert.doesNotMatch(prompt, /summary, usage/i);
 });
 
 test("token explain prompt includes selection preview and glossary hints", () => {

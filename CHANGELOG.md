@@ -8,6 +8,10 @@
 - Repaired corrupted fallback Chinese strings in local, preprocess-cache, and follow-up paths
 - Added tests for prompt-profile generation and remote section-item normalization
 - Validated both prompt generation and token explanation against the configured OpenAI-compatible `gpt-5.4` endpoint
+- Split file preprocessing into audience-aware candidate selection plus batch wordbook generation
+- Expanded preprocessing coverage to include Python-assigned variables and label-like string terms such as class names
+- Made preprocess prompt shaping independent from explanation section preferences
+- Stopped watched selection updates from repeatedly re-revealing the panel and stealing focus from the source editor
 
 ## 0.6.0 - 2026-04-14
 

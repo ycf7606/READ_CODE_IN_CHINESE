@@ -157,6 +157,8 @@ function localCategoryLabel(category: SymbolPreprocessRequest["candidates"][numb
       return "类";
     case "type":
       return "类型";
+    case "label":
+      return "标签名";
     default:
       return "变量";
   }

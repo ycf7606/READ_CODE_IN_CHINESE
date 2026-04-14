@@ -10,12 +10,13 @@ const CATEGORY_WEIGHT: Record<PreprocessedSymbolCategory, number> = {
   function: 48,
   class: 40,
   type: 34,
-  variable: 22
+  variable: 24,
+  label: 20
 };
 
-const PROFESSION_BASE_LIMIT: Record<ProfessionalLevel, number> = {
-  beginner: 24,
-  intermediate: 14,
+const PROFESSIONAL_BASE_LIMIT: Record<ProfessionalLevel, number> = {
+  beginner: 26,
+  intermediate: 16,
   expert: 8
 };
 
@@ -27,6 +28,51 @@ const OCCUPATION_LIMIT_DELTA: Record<Occupation, number> = {
   maintainer: 2
 };
 
+const COMMON_FUNCTION_TERMS = new Set([
+  "forward",
+  "backward",
+  "fit",
+  "predict",
+  "transform",
+  "main",
+  "setup",
+  "teardown",
+  "render",
+  "update",
+  "train",
+  "eval",
+  "load",
+  "save",
+  "run",
+  "call",
+  "__call__",
+  "__init__"
+]);
+
+const COMMON_VARIABLE_TERMS = new Set([
+  "input",
+  "inputs",
+  "output",
+  "outputs",
+  "data",
+  "value",
+  "values",
+  "item",
+  "items",
+  "result",
+  "results",
+  "label",
+  "labels",
+  "name",
+  "names",
+  "type",
+  "types",
+  "target",
+  "targets",
+  "temp",
+  "tmp"
+]);
+
 export function buildPreprocessCandidates(
   glossaryEntries: GlossaryEntry[],
   professionalLevel: ProfessionalLevel,
@@ -37,14 +83,14 @@ export function buildPreprocessCandidates(
   return glossaryEntries
     .filter((entry) => isPreprocessCategory(entry.category))
     .filter((entry) => entry.sourceLine && entry.sourceLine > 0)
-    .filter((entry) => keepCandidateForAudience(entry, professionalLevel))
+    .filter((entry) => keepCandidateForAudience(entry, professionalLevel, occupation))
     .map((entry) => ({
       term: entry.term,
       normalizedTerm: entry.normalizedTerm,
       category: entry.category as PreprocessedSymbolCategory,
       sourceLine: entry.sourceLine ?? 0,
       references: entry.references,
-      score: scoreCandidate(entry)
+      score: scoreCandidate(entry, occupation)
     }))
     .sort((left, right) => {
       return (
@@ -62,7 +108,7 @@ export function getPreprocessCandidateLimit(
 ): number {
   return Math.max(
     6,
-    PROFESSION_BASE_LIMIT[professionalLevel] + OCCUPATION_LIMIT_DELTA[occupation]
+    PROFESSIONAL_BASE_LIMIT[professionalLevel] + OCCUPATION_LIMIT_DELTA[occupation]
   );
 }
 
@@ -73,16 +119,34 @@ function isPreprocessCategory(
     category === "variable" ||
     category === "function" ||
     category === "class" ||
-    category === "type"
+    category === "type" ||
+    category === "label"
   );
 }
 
 function keepCandidateForAudience(
   entry: GlossaryEntry,
-  professionalLevel: ProfessionalLevel
+  professionalLevel: ProfessionalLevel,
+  occupation: Occupation
 ): boolean {
+  if (isTooCommonForAudience(entry, professionalLevel, occupation)) {
+    return false;
+  }
+
   if (entry.category === "function" || entry.category === "class" || entry.category === "type") {
     return true;
+  }
+
+  if (entry.category === "label") {
+    if (professionalLevel === "beginner") {
+      return entry.term.length > 1;
+    }
+
+    if (professionalLevel === "intermediate") {
+      return entry.references > 0 || /[A-Z_-]/.test(entry.term);
+    }
+
+    return entry.references > 1 || /[A-Z_-]/.test(entry.term);
   }
 
   if (professionalLevel === "beginner") {
@@ -90,18 +154,82 @@ function keepCandidateForAudience(
   }
 
   if (professionalLevel === "intermediate") {
-    return entry.references > 1 || entry.term.length > 3;
+    return entry.references > 1 || /[A-Z_]/.test(entry.term) || entry.term.length > 3;
   }
 
-  return entry.references > 1 && entry.term.length > 3;
+  return entry.references > 1 && (/[A-Z_]/.test(entry.term) || entry.term.length > 4);
 }
 
-function scoreCandidate(entry: GlossaryEntry): number {
+function isTooCommonForAudience(
+  entry: GlossaryEntry,
+  professionalLevel: ProfessionalLevel,
+  occupation: Occupation
+): boolean {
+  const normalizedTerm = entry.normalizedTerm;
+
+  if (professionalLevel === "beginner") {
+    return false;
+  }
+
+  if (
+    entry.category === "function" &&
+    COMMON_FUNCTION_TERMS.has(normalizedTerm) &&
+    professionalLevel === "expert"
+  ) {
+    return true;
+  }
+
+  if (
+    (entry.category === "variable" || entry.category === "label") &&
+    COMMON_VARIABLE_TERMS.has(normalizedTerm) &&
+    professionalLevel === "expert"
+  ) {
+    return true;
+  }
+
+  if (
+    professionalLevel === "intermediate" &&
+    entry.category === "function" &&
+    COMMON_FUNCTION_TERMS.has(normalizedTerm) &&
+    entry.references <= 1 &&
+    occupation !== "student"
+  ) {
+    return true;
+  }
+
+  if (
+    professionalLevel === "intermediate" &&
+    (entry.category === "variable" || entry.category === "label") &&
+    COMMON_VARIABLE_TERMS.has(normalizedTerm) &&
+    entry.references <= 2 &&
+    occupation === "developer"
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function scoreCandidate(entry: GlossaryEntry, occupation: Occupation): number {
   const categoryWeight = isPreprocessCategory(entry.category)
     ? CATEGORY_WEIGHT[entry.category]
     : 0;
-  const nameComplexityWeight = /[A-Z_]/.test(entry.term) ? 5 : 0;
+  const nameComplexityWeight = /[A-Z_]/.test(entry.term) ? 6 : 0;
+  const labelShapeWeight = entry.category === "label" && /[-_]/.test(entry.term) ? 4 : 0;
   const sourceLineWeight = entry.sourceLine ? Math.max(0, 12 - Math.min(entry.sourceLine, 12)) : 0;
+  const occupationBoost =
+    occupation === "student" && (entry.category === "variable" || entry.category === "label")
+      ? 4
+      : occupation === "data-scientist" && (entry.category === "label" || entry.category === "type")
+        ? 4
+        : 0;
 
-  return categoryWeight + entry.references * 6 + nameComplexityWeight + sourceLineWeight;
+  return (
+    categoryWeight +
+    entry.references * 6 +
+    nameComplexityWeight +
+    labelShapeWeight +
+    sourceLineWeight +
+    occupationBoost
+  );
 }

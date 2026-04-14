@@ -154,11 +154,13 @@ export function buildSymbolPreprocessPrompts(request: SymbolPreprocessRequest): 
 
   return {
     system: [
-      "You summarize user-defined code symbols in concise Chinese.",
+      "You summarize file-local code symbols in concise Chinese.",
       "Respond with valid JSON only.",
       'Use this exact shape: {"entries":[{"term":"string","summary":"string"}]}',
       "Return one short sentence per symbol.",
+      "This is a file wordbook task, not a full explanation task.",
       "Focus only on the symbol's role in this file.",
+      "Do not mirror explanation sections such as summary, inputOutput, usage, syntax, or risk.",
       "Do not add sections, markdown, or extra keys.",
       "Do not explain imports, built-in syntax, or generic language rules.",
       request.customInstructions || ""
