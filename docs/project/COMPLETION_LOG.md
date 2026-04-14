@@ -744,3 +744,62 @@
   - `D:\project\????\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-17.md`
 - Verification:
   - Manual review of the updated context files
+
+### S18-01 Render the full current-file wordbook
+
+- Stage: 18
+- Result: Removed the wordbook tab preview limit so the panel now renders the full current file cache instead of only the first 12 entries.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S18-02 Fix preprocess cache integrity
+
+- Stage: 18
+- Result: Stopped partial cache writes from storing synthetic placeholder entries, ignored placeholder-like legacy entries when resuming preprocessing, and ensured remote/local preprocess results are marked as real entries.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\knowledge\symbolPreprocessBuilder.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\openAICompatibleProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\localProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\contracts.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S18-03 Clarify preprocess progress semantics
+
+- Stage: 18
+- Result: Split preprocess progress reporting into candidate-pool size, selected-target count, cached-entry count, and processed batches so the UI matches real build state.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\contracts.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S18-04 Sanitize legacy wordbook caches on load
+
+- Stage: 18
+- Result: Added load-time cleanup for placeholder-like legacy wordbook cache entries so old incomplete caches no longer appear complete after reopening the file.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S18-05 Publish the Stage 18 summary
+
+- Stage: 18
+- Result: Updated README, architecture docs, changelog, workboard, and created the Stage 18 summary for future context loading.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\COMPLETION_LOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-18.md`
+- Verification:
+  - Manual review of the updated context files

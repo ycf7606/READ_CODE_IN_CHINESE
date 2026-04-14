@@ -135,7 +135,8 @@ export class LocalExplanationProvider implements ExplanationProvider {
         summary: `\`${candidate.term}\` 是当前文件中的${localCategoryLabel(
           candidate.category
         )}，具体职责要结合附近赋值和调用位置判断。`,
-        generatedAt: new Date().toISOString()
+        generatedAt: new Date().toISOString(),
+        isPlaceholder: false
       })),
       source: this.id,
       latencyMs: Date.now() - startedAt

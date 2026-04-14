@@ -93,7 +93,7 @@ export async function buildSymbolPreprocessCache(
     options.candidatePool ?? buildPreprocessCandidatePool(options.glossaryEntries);
 
   options.onProgress?.(
-    createProgress(candidatePool.length, 0, sourceHash, options.relativeFilePath, {
+    createProgress(candidatePool.length, 0, 0, sourceHash, options.relativeFilePath, {
       status: "running",
       completedSteps: 1,
       currentStep: "Preparing candidate pool",
@@ -112,7 +112,11 @@ export async function buildSymbolPreprocessCache(
   );
   const cachedEntries =
     existingCache && existingCache.sourceHash === sourceHash
-      ? existingCache.entries.filter((entry) => selectedCandidateTerms.has(entry.normalizedTerm))
+      ? existingCache.entries.filter(
+          (entry) =>
+            selectedCandidateTerms.has(entry.normalizedTerm) &&
+            !isPlaceholderPreprocessEntry(entry)
+        )
       : [];
   const missingCandidates = selectedCandidates.filter(
     (candidate) => !cachedEntries.some((entry) => entry.normalizedTerm === candidate.normalizedTerm)
@@ -129,7 +133,7 @@ export async function buildSymbolPreprocessCache(
     await preprocessStore.write(options.relativeFilePath, emptyCache);
     options.onCacheUpdate?.(emptyCache);
     options.onProgress?.(
-      createProgress(0, 0, sourceHash, options.relativeFilePath, {
+      createProgress(candidatePool.length, 0, 0, sourceHash, options.relativeFilePath, {
         status: "completed",
         completedSteps: 5,
         currentStep: "Completed",
@@ -148,7 +152,7 @@ export async function buildSymbolPreprocessCache(
     const normalizedCache = buildCacheFile(
       options,
       sourceHash,
-      normalizePreprocessEntries(selectedCandidates, cachedEntries)
+      sortPreprocessEntries(cachedEntries, selectedCandidates)
     );
 
     if (
@@ -162,6 +166,7 @@ export async function buildSymbolPreprocessCache(
 
     options.onProgress?.(
       createProgress(
+        candidatePool.length,
         selectedCandidates.length,
         normalizedCache.entries.length,
         sourceHash,
@@ -199,6 +204,7 @@ export async function buildSymbolPreprocessCache(
 
     options.onProgress?.(
       createProgress(
+        candidatePool.length,
         selectedCandidates.length,
         mergedEntries.size,
         sourceHash,
@@ -236,12 +242,13 @@ export async function buildSymbolPreprocessCache(
     const partialCache = buildCacheFile(
       options,
       sourceHash,
-      normalizePreprocessEntries(selectedCandidates, Array.from(mergedEntries.values()))
+      sortPreprocessEntries(Array.from(mergedEntries.values()), selectedCandidates)
     );
     await preprocessStore.write(options.relativeFilePath, partialCache);
     options.onCacheUpdate?.(partialCache);
     options.onProgress?.(
       createProgress(
+        candidatePool.length,
         selectedCandidates.length,
         partialCache.entries.length,
         sourceHash,
@@ -261,11 +268,15 @@ export async function buildSymbolPreprocessCache(
   const cacheFile = buildCacheFile(
     options,
     sourceHash,
-    normalizePreprocessEntries(selectedCandidates, Array.from(mergedEntries.values()))
+    sortPreprocessEntries(
+      normalizePreprocessEntries(selectedCandidates, Array.from(mergedEntries.values())),
+      selectedCandidates
+    )
   );
 
   options.onProgress?.(
     createProgress(
+      candidatePool.length,
       selectedCandidates.length,
       cacheFile.entries.length,
       sourceHash,
@@ -295,6 +306,7 @@ export async function buildSymbolPreprocessCache(
 
   options.onProgress?.(
     createProgress(
+      candidatePool.length,
       selectedCandidates.length,
       cacheFile.entries.length,
       sourceHash,
@@ -337,12 +349,12 @@ async function selectCandidatesForPreprocess(
   );
 
   options.onProgress?.(
-    createProgress(candidatePool.length, 0, sourceHash, options.relativeFilePath, {
-      status: "running",
-      completedSteps: 2,
-      currentStep: "Selecting wordbook terms",
-      message: `Selecting ${targetSelectionCount} wordbook terms from ${candidatePool.length} candidates.`
-    })
+      createProgress(candidatePool.length, targetSelectionCount, 0, sourceHash, options.relativeFilePath, {
+        status: "running",
+        completedSteps: 2,
+        currentStep: "Selecting wordbook terms",
+        message: `Selecting ${targetSelectionCount} wordbook terms from ${candidatePool.length} candidates.`
+      })
   );
 
   if (options.provider.selectPreprocessCandidates) {
@@ -380,6 +392,7 @@ async function selectCandidatesForPreprocess(
 
       options.onProgress?.(
         createProgress(
+          candidatePool.length,
           selectedCandidates.length,
           0,
           sourceHash,
@@ -415,6 +428,7 @@ async function selectCandidatesForPreprocess(
 
   options.onProgress?.(
     createProgress(
+      candidatePool.length,
       fallbackCandidates.length,
       0,
       sourceHash,
@@ -569,21 +583,36 @@ function normalizePreprocessEntries(
   entries: PreprocessedSymbolEntry[]
 ): PreprocessedSymbolEntry[] {
   const entryMap = new Map(entries.map((entry) => [entry.normalizedTerm, entry]));
+  const normalizedEntries: PreprocessedSymbolEntry[] = [];
 
-  return candidates.map((candidate) => {
+  for (const candidate of candidates) {
     const matchedEntry = entryMap.get(candidate.normalizedTerm);
 
+    if (!matchedEntry) {
+      continue;
+    }
+
+    normalizedEntries.push({
+      ...matchedEntry,
+      isPlaceholder: false
+    });
+  }
+
+  return normalizedEntries;
+}
+
+function sortPreprocessEntries(
+  entries: PreprocessedSymbolEntry[],
+  candidates: PreprocessedSymbolCandidate[]
+): PreprocessedSymbolEntry[] {
+  const orderMap = new Map(
+    candidates.map((candidate, index) => [candidate.normalizedTerm, index])
+  );
+
+  return [...entries].sort((left, right) => {
     return (
-      matchedEntry ?? {
-        term: candidate.term,
-        normalizedTerm: candidate.normalizedTerm,
-        category: candidate.category,
-        sourceLine: candidate.sourceLine,
-        summary: `\`${candidate.term}\` 是当前文件中的${toCategoryLabel(
-          candidate.category
-        )}，作用需要结合附近代码继续确认。`,
-        generatedAt: new Date().toISOString()
-      }
+      (orderMap.get(left.normalizedTerm) ?? Number.MAX_SAFE_INTEGER) -
+      (orderMap.get(right.normalizedTerm) ?? Number.MAX_SAFE_INTEGER)
     );
   });
 }
@@ -604,6 +633,7 @@ function toCategoryLabel(category: PreprocessedSymbolCandidate["category"]): str
 }
 
 function createProgress(
+  candidatePoolCount: number,
   totalCandidates: number,
   processedCandidates: number,
   sourceHash: string,
@@ -618,11 +648,19 @@ function createProgress(
     completedSteps: 0,
     batchCount: totalCandidates > 0 ? Math.max(1, Math.ceil(totalCandidates / PREPROCESS_CHUNK_SIZE)) : 0,
     processedBatches: 0,
+    candidatePoolCount,
     relativeFilePath,
     sourceHash,
     startedAt: new Date().toISOString(),
     ...overrides
   };
+}
+
+function isPlaceholderPreprocessEntry(entry: PreprocessedSymbolEntry): boolean {
+  return (
+    entry.isPlaceholder === true ||
+    /作用需要结合附近代码继续确认/.test(entry.summary)
+  );
 }
 
 function isAbortLikeError(error: unknown): boolean {

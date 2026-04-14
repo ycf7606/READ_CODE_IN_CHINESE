@@ -30,6 +30,7 @@ import { buildExplainPrompts } from "../prompts/openAICompatiblePrompt";
 import { LocalExplanationProvider } from "../providers/localProvider";
 import { OpenAICompatibleProvider } from "../providers/openAICompatibleProvider";
 import { WorkspaceStore } from "../storage/workspaceStore";
+import { createContentHash } from "../utils/hash";
 import {
   ExplanationRequest,
   PreprocessProgress,
@@ -447,6 +448,121 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
   assert.deepEqual(preprocessBatchSizes, [20, 20, 6]);
   assert.ok(progressSnapshots.some((snapshot) => snapshot.batchCount === 3));
   assert.ok(progressSnapshots.some((snapshot) => snapshot.processedBatches === 3));
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
+});
+
+test("symbol preprocess builder ignores placeholder cache entries", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-symbol-preprocess-placeholders-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const sourceCode = [
+    "const featureMap = buildFeatureMap(values);",
+    "function buildFeatureMap(input) { return input; }"
+  ].join("\n");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "typescript");
+  const preprocessStore = new PreprocessStore(store);
+  const sourceHash = createContentHash(sourceCode);
+  await preprocessStore.write("src/example.ts", {
+    languageId: "typescript",
+    relativeFilePath: "src/example.ts",
+    sourceHash,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        term: "featureMap",
+        normalizedTerm: "featuremap",
+        category: "variable",
+        sourceLine: 1,
+        summary: "`featureMap` 是当前文件中的变量，作用需要结合附近代码继续确认。",
+        generatedAt: new Date().toISOString(),
+        isPlaceholder: true
+      }
+    ]
+  });
+
+  let preprocessCalls = 0;
+  const provider = {
+    id: "openai-compatible",
+    async explain() {
+      throw new Error("unused");
+    },
+    async answerFollowUp() {
+      return {
+        answer: "unused",
+        suggestedQuestions: [],
+        source: "openai-compatible",
+        latencyMs: 1
+      };
+    },
+    async selectPreprocessCandidates(request: {
+      requestId: string;
+      languageId: string;
+      candidatePool: Array<{ term: string }>;
+    }) {
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        selectedTerms: request.candidatePool.map((candidate) => candidate.term),
+        source: "openai-compatible",
+        latencyMs: 8
+      };
+    },
+    async preprocessSymbols(request: SymbolPreprocessRequest) {
+      preprocessCalls += 1;
+
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        source: "openai-compatible",
+        latencyMs: 20,
+        entries: request.candidates.map((candidate) => ({
+          term: candidate.term,
+          normalizedTerm: candidate.normalizedTerm,
+          category: candidate.category,
+          sourceLine: candidate.sourceLine,
+          summary: candidate.term + " summary",
+          generatedAt: new Date().toISOString()
+        }))
+      };
+    }
+  };
+
+  const result = await buildSymbolPreprocessCache({
+    editorText: sourceCode,
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    settings: {
+      autoExplainEnabled: false,
+      autoExplainDelayMs: 600,
+      autoOpenPanel: true,
+      providerId: "openai-compatible",
+      providerBaseUrl: "https://example.com/v1",
+      providerModel: "gpt-5.4",
+      providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerTimeoutMs: 20000,
+      providerTemperature: 0.2,
+      providerTopP: 1,
+      providerMaxTokens: 1200,
+      providerReasoningEffort: "medium",
+      detailLevel: "balanced",
+      professionalLevel: "beginner",
+      occupation: "developer",
+      sections: ["summary", "usage"],
+      userGoal: "",
+      knowledgeTopK: 3,
+      customInstructions: ""
+    },
+    glossaryEntries,
+    workspaceStore: store,
+    provider
+  });
+
+  assert.ok(result);
+  assert.equal(preprocessCalls, 1);
+  assert.ok(result.cacheFile.entries.every((entry) => !entry.isPlaceholder));
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 

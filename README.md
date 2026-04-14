@@ -28,7 +28,7 @@
 ## Current Status
 
 - Stage 0-7 completed
-- Stage 16 API-driven wordbook candidate selection is complete, so file preprocessing now uses a dedicated provider pass before batch wordbook generation
+- Stage 18 wordbook cache integrity and progress clarity are complete, so file preprocessing now shows accurate counts, full wordbook results, and repairs legacy placeholder caches on load
 - Tracking board: `docs/project/WORKBOARD.md`
 
 ## Main Commands
@@ -62,9 +62,8 @@
   - automatic selection watching when the panel is open, without dropping the current source-editor context when the user clicks the panel
   - inline reasoning-effort selector for follow-up chat
   - settings button that opens the configuration panel
-  - preprocess progress, symbol counts, and cache-aware status messages
-  - visible file wordbook for the current file preprocess cache
-  - suggested follow-up questions
+  - preprocess progress with separate candidate-pool, selected-target, cached-entry, and batch counts
+  - visible full-file wordbook for the current file preprocess cache
   - glossary snapshot
   - workspace index preview
   - follow-up chat
@@ -189,8 +188,9 @@ When the remote provider is enabled, the extension can preprocess the active fil
 - Wordbook preprocess prompts now force a fast remote path with low reasoning effort and shorter batch outputs
 - Preprocess prompt shaping ignores explanation section preferences such as `summary`, `usage`, or `risk`
 - Local heuristics remain only as a fallback when the provider cannot perform the selection pass
-- The explanation panel shows 5-step preprocess progress, symbol counts, batch count, and cache-aware status messages
-- The explanation panel also shows a visible file wordbook sourced from the current file preprocess cache
+- The explanation panel shows 5-step preprocess progress with distinct candidate-pool, selected-target, cached-entry, and batch counts
+- The explanation panel shows the full file wordbook sourced from the current file preprocess cache instead of a short preview slice
+- Legacy placeholder cache entries from older builds are removed automatically when the file is reopened, so stale partial caches do not appear complete
 - Single-symbol explanations first check this file-level preprocess cache before hitting the model again
 - If the user changes selection while an explanation request is still running, the older explanation is aborted and the newest selection wins
 - Background wordbook preprocessing keeps running while the user continues reading the same file

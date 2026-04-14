@@ -41,7 +41,7 @@ The extension is designed to make source code easier to read by combining:
 - `knowledgeStore.ts`: imports `.md`, `.txt`, and `.json` documents, stores them in workspace cache, and retrieves top keyword matches
 - `officialDocs.ts`: downloads preset official/reference language documents and chunks them into the knowledge library
 - `preprocessStore.ts`: stores file-scoped batches of user-defined symbol summaries
-- `symbolPreprocessBuilder.ts`: builds a raw file candidate pool, asks the provider to select worth-preprocessing terms when available, reconciles that result against audience retention targets, then preprocesses selected symbols in prioritized chunks while writing partial cache updates
+- `symbolPreprocessBuilder.ts`: builds a raw file candidate pool, asks the provider to select worth-preprocessing terms when available, reconciles that result against audience retention targets, then preprocesses selected symbols in prioritized chunks while writing partial cache updates that contain only real generated entries
 - `tokenKnowledgeStore.ts`: stores successful token-level explanations as a compatibility fallback cache
 - `tokenKnowledgeBuilder.ts`: older token-prebuild helper retained for compatibility paths
 
@@ -57,7 +57,7 @@ The extension is designed to make source code easier to read by combining:
 ### `src/ui/`
 
 - `glossaryTreeProvider.ts`: Explorer sidebar glossary
-- `explanationPanel.ts`: explanation tab, separate wordbook tab, selection metadata, preprocess progress, glossary snapshot, workspace preview, and follow-up chat
+- `explanationPanel.ts`: explanation tab, separate wordbook tab, selection metadata, preprocess progress with clearer count semantics, glossary snapshot, workspace preview, and follow-up chat
 - `settingsPanel.ts`: first-run onboarding, provider controls, preprocess trigger, occupation presets, provider-backed prompt generation, and editable prompt / hyperparameter controls
 
 ## Data Flow
@@ -77,11 +77,12 @@ The extension is designed to make source code easier to read by combining:
 13. If remote selection is unavailable or fails, the extension falls back to local audience-aware ranking with the same retention targets
 14. The selected wordbook terms are then processed in prioritized chunks of about 20 symbols, with partial cache writes after each chunk
 15. Recent selection activity influences the order of the remaining chunks, so repeatedly read areas are preprocessed earlier
-16. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins, but background wordbook preprocessing is not canceled for ordinary same-file reading
-17. Successful remote token explanations can still be written into the token knowledge cache
-18. Panel, glossary UI, wordbook tab, preprocess progress, and status metadata update
-19. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
-20. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
+16. Partial preprocess cache writes store only actual generated entries, and legacy placeholder entries are ignored when resuming or reopening a file
+17. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins, but background wordbook preprocessing is not canceled for ordinary same-file reading
+18. Successful remote token explanations can still be written into the token knowledge cache
+19. Panel, glossary UI, wordbook tab, preprocess progress, and status metadata update with separate candidate-pool, selected-target, cached-entry, and batch counts
+20. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
+21. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 

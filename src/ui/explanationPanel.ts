@@ -639,7 +639,19 @@ export class ExplanationPanel implements vscode.Disposable {
         let percentage = 0;
 
         if (progress) {
-          lines.push("Symbols: " + progress.processedCandidates + " / " + progress.totalCandidates);
+          const candidatePoolCount = progress.candidatePoolCount || progress.totalCandidates;
+          const selectingStep = (progress.currentStep || "").toLowerCase().includes("select");
+
+          if (selectingStep) {
+            lines.push("Candidate pool: " + candidatePoolCount);
+            lines.push("Selected target: " + progress.totalCandidates);
+          } else {
+            lines.push("Cached entries: " + progress.processedCandidates + " / " + progress.totalCandidates);
+            if (candidatePoolCount !== progress.totalCandidates) {
+              lines.push("Selected from: " + candidatePoolCount + " candidates");
+            }
+          }
+
           lines.push(
             "Batches: " +
               (progress.processedBatches || 0) +
@@ -705,12 +717,15 @@ export class ExplanationPanel implements vscode.Disposable {
 
         wordbook.innerHTML = "";
         if ((payload.wordbookEntries || []).length) {
-          for (const entry of payload.wordbookEntries.slice(0, 12)) {
+          for (const entry of payload.wordbookEntries) {
             wordbook.appendChild(
               renderListItem(
                 entry.term,
                 entry.summary,
-                entry.category + " | line " + entry.sourceLine
+                entry.category +
+                  " | line " +
+                  entry.sourceLine +
+                  (entry.isPlaceholder ? " | pending" : "")
               )
             );
           }

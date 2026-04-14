@@ -2,6 +2,10 @@
 
 ## Unreleased - 2026-04-14
 
+- Fixed the wordbook tab to render the full current-file cache instead of only the first 12 entries
+- Stopped partial preprocess cache writes from storing synthetic placeholder entries as if they were completed results
+- Clarified preprocess progress so the UI now separates candidate pool size, selected target count, cached entry count, and processed batches
+- Auto-sanitize legacy placeholder wordbook cache entries when reopening a file so stale partial caches do not look complete
 - Added a visible file wordbook section in the explanation panel, backed by the current file preprocess cache
 - Switched settings-panel prompt generation from local string concatenation to provider-backed prompt-profile generation with local fallback
 - Tightened dictionary-style rendering so section bullet items are shown without duplicated paragraph text

@@ -579,37 +579,39 @@ function normalizePreprocessEntries(
   const candidateMap = new Map(
     candidates.map((candidate) => [candidate.normalizedTerm, candidate])
   );
+  const normalizedEntries: PreprocessedSymbolEntry[] = [];
 
-  return value
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return undefined;
-      }
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
 
-      const candidate = entry as { term?: unknown; summary?: unknown };
-      const term = typeof candidate.term === "string" ? candidate.term.trim() : "";
-      const summary = typeof candidate.summary === "string" ? candidate.summary.trim() : "";
+    const candidate = entry as { term?: unknown; summary?: unknown };
+    const term = typeof candidate.term === "string" ? candidate.term.trim() : "";
+    const summary = typeof candidate.summary === "string" ? candidate.summary.trim() : "";
 
-      if (!term || !summary) {
-        return undefined;
-      }
+    if (!term || !summary) {
+      continue;
+    }
 
-      const matchedCandidate = candidateMap.get(term.toLowerCase());
+    const matchedCandidate = candidateMap.get(term.toLowerCase());
 
-      if (!matchedCandidate) {
-        return undefined;
-      }
+    if (!matchedCandidate) {
+      continue;
+    }
 
-      return {
-        term: matchedCandidate.term,
-        normalizedTerm: matchedCandidate.normalizedTerm,
-        category: matchedCandidate.category,
-        sourceLine: matchedCandidate.sourceLine,
-        summary,
-        generatedAt: new Date().toISOString()
-      };
-    })
-    .filter((entry): entry is PreprocessedSymbolEntry => Boolean(entry));
+    normalizedEntries.push({
+      term: matchedCandidate.term,
+      normalizedTerm: matchedCandidate.normalizedTerm,
+      category: matchedCandidate.category,
+      sourceLine: matchedCandidate.sourceLine,
+      summary,
+      generatedAt: new Date().toISOString(),
+      isPlaceholder: false
+    });
+  }
+
+  return normalizedEntries;
 }
 
 function normalizeSelectedTerms(

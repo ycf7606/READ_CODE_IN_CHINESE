@@ -1291,7 +1291,18 @@ export function activate(context: vscode.ExtensionContext): void {
   ): void {
     sessionState.wordbookRelativeFilePath = relativeFilePath;
     sessionState.wordbookSourceHash = sourceHash;
-    sessionState.wordbookEntries = entries;
+    sessionState.wordbookEntries = sanitizeWordbookEntries(entries);
+  }
+
+  function sanitizeWordbookEntries(
+    entries: PreprocessedSymbolEntry[]
+  ): PreprocessedSymbolEntry[] {
+    return entries.filter((entry) => {
+      return (
+        entry.isPlaceholder !== true &&
+        !/作用需要结合附近代码继续确认/.test(entry.summary)
+      );
+    });
   }
 
   function getVisibleWordbookEntries(editor: vscode.TextEditor | undefined): PreprocessedSymbolEntry[] {
@@ -1342,7 +1353,17 @@ export function activate(context: vscode.ExtensionContext): void {
     const cacheFile = await preprocessStore.read(projectContext.relativeFilePath);
 
     if (cacheFile && cacheFile.sourceHash === sourceHash) {
-      setWordbookState(projectContext.relativeFilePath, cacheFile.sourceHash, cacheFile.entries);
+      const sanitizedEntries = sanitizeWordbookEntries(cacheFile.entries);
+
+      if (sanitizedEntries.length !== cacheFile.entries.length) {
+        await preprocessStore.write(projectContext.relativeFilePath, {
+          ...cacheFile,
+          generatedAt: new Date().toISOString(),
+          entries: sanitizedEntries
+        });
+      }
+
+      setWordbookState(projectContext.relativeFilePath, cacheFile.sourceHash, sanitizedEntries);
     } else {
       setWordbookState(projectContext.relativeFilePath, sourceHash, []);
     }
@@ -1419,11 +1440,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
       sessionState.preprocessProgress = {
         status: "running",
-        totalCandidates: candidatePool.length,
+        totalCandidates: 0,
         processedCandidates: 0,
         totalSteps: 5,
         completedSteps: 1,
-        batchCount: candidatePool.length > 0 ? 1 : 0,
+        batchCount: 0,
+        candidatePoolCount: candidatePool.length,
         relativeFilePath: projectContext.relativeFilePath,
         currentStep: "Preparing candidate pool",
         message: `Prepared ${candidatePool.length} preprocessable symbols for this file.`,

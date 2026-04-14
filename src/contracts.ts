@@ -218,6 +218,7 @@ export interface PreprocessedSymbolEntry {
   sourceLine: number;
   summary: string;
   generatedAt: string;
+  isPlaceholder?: boolean;
 }
 
 export interface PreprocessedSymbolCacheFile {
@@ -300,6 +301,7 @@ export interface PreprocessProgress {
   completedSteps: number;
   batchCount: number;
   processedBatches?: number;
+  candidatePoolCount?: number;
   relativeFilePath?: string;
   currentStep?: string;
   message?: string;
