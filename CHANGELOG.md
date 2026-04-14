@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0 - 2026-04-14
+
+- Replaced broad token prebuild behavior with file-scoped user-defined symbol preprocessing
+- Added preprocess progress tracking, batch counts, and file-level cache reads in the explanation panel
+- Aborted stale explain and follow-up requests when newer editor context arrives
+- Improved token prompts with exact selection-line previews and glossary hints
+- Hardened remote response parsing against alternative content shapes
+- Strengthened settings persistence and numeric sanitization
+- Added tests for preprocess progress, prompt shaping, and real `squeeze` token smoke validation
+
 ## 0.5.0 - 2026-04-14
 
 - Added a real token knowledge prebuild workflow that uses synced knowledge documents plus the remote model

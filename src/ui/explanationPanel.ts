@@ -4,6 +4,7 @@ import {
   ExplanationGranularity,
   ExplanationResponse,
   GlossaryEntry,
+  PreprocessProgress,
   ReasoningEffort,
   WorkspaceIndex
 } from "../contracts";
@@ -21,6 +22,7 @@ export interface ExplanationPanelState {
   isLoading?: boolean;
   reasoningEffort?: ReasoningEffort;
   lastUpdatedAt?: string;
+  preprocessProgress?: PreprocessProgress;
 }
 
 type PanelMessage =
@@ -250,11 +252,6 @@ export class ExplanationPanel implements vscode.Disposable {
         background: var(--vscode-button-secondaryHoverBackground);
       }
 
-      .chip.active {
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-      }
-
       .list {
         display: grid;
         gap: 8px;
@@ -286,6 +283,26 @@ export class ExplanationPanel implements vscode.Disposable {
         border-radius: 10px;
         background: color-mix(in srgb, var(--vscode-inputOption-activeBackground) 55%, transparent);
         border: 1px solid color-mix(in srgb, var(--vscode-inputOption-activeBorder) 55%, transparent);
+      }
+
+      .progress-wrap {
+        display: grid;
+        gap: 8px;
+      }
+
+      .progress-bar {
+        width: 100%;
+        height: 8px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: color-mix(in srgb, var(--vscode-input-background) 88%, transparent);
+      }
+
+      .progress-fill {
+        width: 0%;
+        height: 100%;
+        background: linear-gradient(90deg, var(--vscode-textLink-foreground), color-mix(in srgb, var(--vscode-textLink-foreground) 65%, white));
+        transition: width 0.15s ease;
       }
 
       textarea {
@@ -372,7 +389,14 @@ export class ExplanationPanel implements vscode.Disposable {
           </div>
           <div>
             <div class="label">Detected Type</div>
-            <div id="granularityChips" class="chips"></div>
+            <div id="detectedType" class="chips"></div>
+          </div>
+          <div>
+            <div class="label">Preprocessing</div>
+            <div class="progress-wrap">
+              <div id="preprocessMeta" class="meta"></div>
+              <div class="progress-bar"><div id="preprocessFill" class="progress-fill"></div></div>
+            </div>
           </div>
           <div>
             <div class="label">Sections</div>
@@ -423,7 +447,9 @@ export class ExplanationPanel implements vscode.Disposable {
       const meta = document.getElementById("meta");
       const summary = document.getElementById("summary");
       const engineInfo = document.getElementById("engineInfo");
-      const granularityChips = document.getElementById("granularityChips");
+      const detectedType = document.getElementById("detectedType");
+      const preprocessMeta = document.getElementById("preprocessMeta");
+      const preprocessFill = document.getElementById("preprocessFill");
       const sections = document.getElementById("sections");
       const suggestions = document.getElementById("suggestions");
       const glossary = document.getElementById("glossary");
@@ -432,7 +458,6 @@ export class ExplanationPanel implements vscode.Disposable {
       const questionInput = document.getElementById("questionInput");
       const reasoningEffortSelect = document.getElementById("reasoningEffortSelect");
       const sendButton = document.getElementById("sendButton");
-      const granularityOrder = ["token", "statement", "block", "function", "file", "workspace"];
 
       function renderSection(section) {
         const wrapper = document.createElement("div");
@@ -495,6 +520,48 @@ export class ExplanationPanel implements vscode.Disposable {
         container.appendChild(empty);
       }
 
+      function renderDetectedType(value) {
+        detectedType.innerHTML = "";
+        if (!value) {
+          renderEmpty(detectedType, "No category yet.");
+          return;
+        }
+
+        const chip = document.createElement("div");
+        chip.className = "chip";
+        chip.textContent = value;
+        detectedType.appendChild(chip);
+      }
+
+      function renderPreprocess(progress) {
+        const lines = [];
+        let percentage = 0;
+
+        if (progress) {
+          lines.push("Symbols: " + progress.processedCandidates + " / " + progress.totalCandidates);
+          lines.push("Batches: " + progress.batchCount);
+          if (progress.currentStep) {
+            lines.push("Step: " + progress.currentStep);
+          }
+          if (progress.message) {
+            lines.push(progress.message);
+          }
+
+          if (progress.totalSteps > 0) {
+            percentage = Math.max(0, Math.min(100, Math.round((progress.completedSteps / progress.totalSteps) * 100)));
+          }
+
+          if (progress.status === "running" && percentage === 0) {
+            percentage = 20;
+          }
+        } else {
+          lines.push("Preprocessing has not started for the current file.");
+        }
+
+        preprocessMeta.innerHTML = lines.map((line) => '<div>' + line + '</div>').join("");
+        preprocessFill.style.width = percentage + "%";
+      }
+
       window.addEventListener("message", (event) => {
         const { type, payload } = event.data;
 
@@ -525,14 +592,8 @@ export class ExplanationPanel implements vscode.Disposable {
         ].filter(Boolean);
         engineInfo.innerHTML = engineLines.map((line) => '<div>' + line + '</div>').join("");
 
-        granularityChips.innerHTML = "";
-        for (const item of granularityOrder) {
-          const chip = document.createElement("button");
-          chip.type = "button";
-          chip.className = "chip" + (payload.currentGranularity === item ? " active" : "");
-          chip.textContent = item;
-          granularityChips.appendChild(chip);
-        }
+        renderDetectedType(payload.currentGranularity);
+        renderPreprocess(payload.preprocessProgress);
 
         sections.innerHTML = "";
         if (explanation?.sections?.length) {

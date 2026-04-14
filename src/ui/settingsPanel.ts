@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import {
   ExtensionSettings,
   ExplanationSectionName,
+  Occupation,
   ProviderId,
   ReasoningEffort
 } from "../contracts";
@@ -10,9 +11,20 @@ interface SettingsPayload {
   settings: ExtensionSettings;
 }
 
+type PromptGenerationPayload = {
+  occupation: Occupation;
+  userGoal: string;
+  detailLevel: ExtensionSettings["detailLevel"];
+  professionalLevel: ExtensionSettings["professionalLevel"];
+};
+
 type SettingsMessage =
   | { type: "ready" }
-  | { type: "buildTokenKnowledge" }
+  | { type: "runPreprocess" }
+  | {
+      type: "generatePrompt";
+      payload: PromptGenerationPayload;
+    }
   | {
       type: "saveSettings";
       payload: {
@@ -25,6 +37,7 @@ type SettingsMessage =
         userGoal: string;
         detailLevel: ExtensionSettings["detailLevel"];
         professionalLevel: ExtensionSettings["professionalLevel"];
+        occupation: Occupation;
         sections: ExplanationSectionName[];
         temperature: number;
         topP: number;
@@ -72,6 +85,20 @@ export class SettingsPanel implements vscode.Disposable {
       await this.onMessage(message);
     });
 
+    this.postState();
+  }
+
+  setDraftGlobalPrompt(prompt: string): void {
+    if (!this.state) {
+      return;
+    }
+
+    this.state = {
+      settings: {
+        ...this.state.settings,
+        customInstructions: prompt
+      }
+    };
     this.postState();
   }
 
@@ -162,7 +189,7 @@ export class SettingsPanel implements vscode.Disposable {
       }
 
       textarea {
-        min-height: 100px;
+        min-height: 140px;
         resize: vertical;
       }
 
@@ -182,6 +209,7 @@ export class SettingsPanel implements vscode.Disposable {
         display: flex;
         justify-content: flex-end;
         gap: 10px;
+        flex-wrap: wrap;
       }
 
       button {
@@ -202,7 +230,7 @@ export class SettingsPanel implements vscode.Disposable {
     <div class="layout">
       <section class="card">
         <h1>Read Code In Chinese Settings</h1>
-        <p class="muted">Set the explanation prompt, reasoning effort, and remote hyperparameters before or during use.</p>
+        <p class="muted">Configure provider settings, audience profile, preprocessing behavior, and the editable global prompt used in runtime prompts.</p>
       </section>
 
       <section class="card">
@@ -236,23 +264,18 @@ export class SettingsPanel implements vscode.Disposable {
       </section>
 
       <section class="card">
-        <h2>Prompt</h2>
-        <p class="muted" style="margin-top: 6px;">Use these fields to steer how explanations and follow-up chat should read.</p>
+        <h2>Audience</h2>
         <div class="grid" style="margin-top: 10px;">
           <label>
-            <span>User Goal</span>
-            <input id="userGoal" />
+            <span>Occupation</span>
+            <select id="occupation">
+              <option value="student">student</option>
+              <option value="developer">developer</option>
+              <option value="data-scientist">data-scientist</option>
+              <option value="researcher">researcher</option>
+              <option value="maintainer">maintainer</option>
+            </select>
           </label>
-        </div>
-        <label style="margin-top: 10px;">
-          <span>Custom Instructions</span>
-          <textarea id="customInstructions"></textarea>
-        </label>
-      </section>
-
-      <section class="card">
-        <h2>Behavior</h2>
-        <div class="grid" style="margin-top: 10px;">
           <label>
             <span>Detail Level</span>
             <select id="detailLevel">
@@ -269,6 +292,16 @@ export class SettingsPanel implements vscode.Disposable {
               <option value="expert">expert</option>
             </select>
           </label>
+          <label>
+            <span>User Goal</span>
+            <input id="userGoal" />
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Hyperparameters</h2>
+        <div class="grid" style="margin-top: 10px;">
           <label>
             <span>Reasoning Effort</span>
             <select id="reasoningEffort">
@@ -308,8 +341,18 @@ export class SettingsPanel implements vscode.Disposable {
         </div>
       </section>
 
+      <section class="card">
+        <h2>Global Prompt</h2>
+        <p class="muted" style="margin-top: 6px;">Generate a prompt from the profile above, then edit it if needed. This text is used in runtime prompts.</p>
+        <label style="margin-top: 10px;">
+          <span>Editable Prompt</span>
+          <textarea id="customInstructions"></textarea>
+        </label>
+      </section>
+
       <div class="actions">
-        <button id="buildTokenKnowledgeButton" type="button">Build Token Knowledge</button>
+        <button id="generatePromptButton" type="button">Generate Prompt</button>
+        <button id="runPreprocessButton" type="button">Preprocess Current File</button>
         <button id="saveButton">Save Settings</button>
       </div>
     </div>
@@ -326,29 +369,32 @@ export class SettingsPanel implements vscode.Disposable {
       const userGoal = document.getElementById("userGoal");
       const detailLevel = document.getElementById("detailLevel");
       const professionalLevel = document.getElementById("professionalLevel");
+      const occupation = document.getElementById("occupation");
       const reasoningEffort = document.getElementById("reasoningEffort");
       const temperature = document.getElementById("temperature");
       const topP = document.getElementById("topP");
       const maxTokens = document.getElementById("maxTokens");
       const autoExplainEnabled = document.getElementById("autoExplainEnabled");
-      const buildTokenKnowledgeButton = document.getElementById("buildTokenKnowledgeButton");
+      const generatePromptButton = document.getElementById("generatePromptButton");
+      const runPreprocessButton = document.getElementById("runPreprocessButton");
       const saveButton = document.getElementById("saveButton");
 
       function setSections(values) {
-        const checkboxes = document.querySelectorAll('.checkboxes input[type=\"checkbox\"]');
+        const checkboxes = document.querySelectorAll('.checkboxes input[type="checkbox"]');
         for (const checkbox of checkboxes) {
           checkbox.checked = values.includes(checkbox.value);
         }
       }
 
       function getSections() {
-        return Array.from(document.querySelectorAll('.checkboxes input[type=\"checkbox\"]'))
+        return Array.from(document.querySelectorAll('.checkboxes input[type="checkbox"]'))
           .filter((checkbox) => checkbox.checked)
           .map((checkbox) => checkbox.value);
       }
 
       window.addEventListener("message", (event) => {
         const { type, payload } = event.data;
+
         if (type !== "render") {
           return;
         }
@@ -363,12 +409,29 @@ export class SettingsPanel implements vscode.Disposable {
         userGoal.value = settings.userGoal || "";
         detailLevel.value = settings.detailLevel;
         professionalLevel.value = settings.professionalLevel;
+        occupation.value = settings.occupation;
         reasoningEffort.value = settings.providerReasoningEffort;
         temperature.value = String(settings.providerTemperature);
         topP.value = String(settings.providerTopP);
         maxTokens.value = String(settings.providerMaxTokens);
         autoExplainEnabled.checked = Boolean(settings.autoExplainEnabled);
         setSections(settings.sections || []);
+      });
+
+      generatePromptButton.addEventListener("click", () => {
+        vscode.postMessage({
+          type: "generatePrompt",
+          payload: {
+            occupation: occupation.value,
+            userGoal: userGoal.value,
+            detailLevel: detailLevel.value,
+            professionalLevel: professionalLevel.value
+          }
+        });
+      });
+
+      runPreprocessButton.addEventListener("click", () => {
+        vscode.postMessage({ type: "runPreprocess" });
       });
 
       saveButton.addEventListener("click", () => {
@@ -384,6 +447,7 @@ export class SettingsPanel implements vscode.Disposable {
             userGoal: userGoal.value,
             detailLevel: detailLevel.value,
             professionalLevel: professionalLevel.value,
+            occupation: occupation.value,
             sections: getSections(),
             temperature: Number(temperature.value),
             topP: Number(topP.value),
@@ -392,10 +456,6 @@ export class SettingsPanel implements vscode.Disposable {
             autoExplainEnabled: autoExplainEnabled.checked
           }
         });
-      });
-
-      buildTokenKnowledgeButton.addEventListener("click", () => {
-        vscode.postMessage({ type: "buildTokenKnowledge" });
       });
 
       vscode.postMessage({ type: "ready" });

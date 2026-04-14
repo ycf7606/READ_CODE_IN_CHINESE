@@ -13,7 +13,7 @@
   - current file overview
   - workspace file index
 - Maintain a file-level glossary cache and show it in the Explorer sidebar
-- Prebuild and cache token-level model explanations into a reusable token knowledge store
+- Batch-preprocess user-defined file symbols into a reusable file-scoped cache
 - Let users edit glossary meanings and re-run explanations
 - Support follow-up chat in a side panel
 - Import local knowledge documents for retrieval-enhanced explanations
@@ -28,7 +28,7 @@
 ## Current Status
 
 - Stage 0-7 completed
-- Stage 11 token knowledge prebuild is complete through knowledge-grounded token preprocessing, expanded settings, and verified remote smoke tests
+- Stage 12 file-symbol preprocessing and request-cancellation flow is complete through real API validation
 - Tracking board: `docs/project/WORKBOARD.md`
 
 ## Main Commands
@@ -41,7 +41,7 @@
 - `Read Code In Chinese: Refresh Glossary`
 - `Read Code In Chinese: Import Knowledge Documents`
 - `Read Code In Chinese: Sync Official Docs For Active Language`
-- `Read Code In Chinese: Build Token Knowledge For Active Language`
+- `Read Code In Chinese: Preprocess Current File Symbols`
 - `Read Code In Chinese: Show Logs`
 - `Read Code In Chinese: Open Settings Panel`
 
@@ -57,12 +57,12 @@
 - Webview panel:
   - latest explanation
   - active file and selection metadata
-  - detected granularity across the six supported explanation classes
+  - one detected category for the current selection
   - loading spinner while remote analysis is running
   - automatic selection watching when the panel is open
   - inline reasoning-effort selector for follow-up chat
   - settings button that opens the configuration panel
-  - token type chips and token prebuild-aware status messages
+  - preprocess progress, symbol counts, and cache-aware status messages
   - suggested follow-up questions
   - glossary snapshot
   - workspace index preview
@@ -93,6 +93,7 @@
 
 - `readCodeInChinese.explanation.detailLevel`
 - `readCodeInChinese.explanation.professionalLevel`
+- `readCodeInChinese.explanation.occupation`
 - `readCodeInChinese.explanation.sections`
 - `readCodeInChinese.explanation.userGoal`
 - `readCodeInChinese.prompt.customInstructions`
@@ -138,7 +139,9 @@ The settings panel can now edit:
 - model
 - API key environment variable name
 - timeout
-- prompt instructions
+- occupation
+- user goal
+- generated global prompt instructions
 - sampling controls
 - reasoning effort
 - auto explain
@@ -165,15 +168,24 @@ Sample schema:
 
 More detail: `docs/knowledge/IMPORTING_KNOWLEDGE.md`
 
-## Token Knowledge Cache And Prebuild
+## File Symbol Preprocessing
 
-When the selected content is a single token, the extension now uses a dedicated token explanation workflow backed by knowledge snippets and a reusable token knowledge store.
+When the remote provider is enabled, the extension can preprocess the active file's user-defined variables, functions, classes, and types in one batch using full-file context.
+
+- Preprocess cache path: `.read-code-in-chinese/preprocess/<file>.json`
+- Command: `Read Code In Chinese: Preprocess Current File Symbols`
+- Candidate scope adapts to `professionalLevel` and `occupation`
+- The explanation panel shows total symbol count, batch count, and progress
+- Single-symbol explanations first check this file-level preprocess cache before hitting the model again
+- If the user changes selection while a request is still running, the older request is aborted and the newest selection wins
+
+## Token Knowledge Cache
+
+The older token knowledge cache still exists as a compatibility fallback for repeated remote token explanations.
 
 - Token cache path: `.read-code-in-chinese/token-knowledge/<language>.json`
-- `Read Code In Chinese: Build Token Knowledge For Active Language` prebuilds common token entries from synced docs and active-file glossary terms
-- Official docs sync now automatically warms token knowledge for the active language when the remote provider is available
-- A token cache miss first tries this prebuild path before falling back to the generic explanation flow
-- Later explanations for the same token can return instantly from the cache
+- It is used after the file-level preprocess cache misses
+- Successful remote token explanations can still be written into this cache for later reuse
 
 ## Official Docs Sync
 
@@ -189,7 +201,7 @@ The extension can fetch a preset bundle of official or reference language docume
   - Java
 - Synced documents are chunked and stored in `.read-code-in-chinese/knowledge/library.json`
 - Partial sync success is allowed, so one failed page does not cancel the whole import
-- After sync, the extension can immediately prebuild reusable token entries for the same language
+- Synced docs enrich later explanation prompts and follow-up answers through retrieval
 
 ## Glossary Workflow
 
@@ -237,9 +249,10 @@ npm.cmd test
 7. Confirm or edit provider, prompt, and reasoning settings in the settings panel.
 8. Open the command palette and run `Read Code In Chinese: Open Conversation Panel`.
 9. Keep the panel open and select code to verify automatic explanation updates.
-10. Run `Read Code In Chinese: Sync Official Docs For Active Language` to import reference docs and warm token knowledge.
-11. Re-select a repeated token and verify that later lookups can return from `token-knowledge-cache`.
-12. If the panel still shows `Engine: local`, run `Read Code In Chinese: Show Logs` and check the effective provider settings written at activation time.
+10. Run `Read Code In Chinese: Sync Official Docs For Active Language` to import reference docs.
+11. Run `Read Code In Chinese: Preprocess Current File Symbols`, or keep the panel open and let the active file preprocess automatically.
+12. Re-select a user-defined symbol and verify that later lookups can return from `preprocess-cache`.
+13. If the panel still shows `Engine: local`, run `Read Code In Chinese: Show Logs` and check the effective provider settings written at activation time.
 
 The development host can now take provider defaults from environment variables, so testing against another workspace does not require copying provider settings into that target workspace.
 
@@ -247,10 +260,10 @@ The development host can now take provider defaults from environment variables, 
 
 High-level architecture:
 
-- `src/extension.ts`: command wiring, selection listeners, session flow, onboarding, token prebuild orchestration, logging, token cache coordination, and fallback handling
+- `src/extension.ts`: command wiring, selection listeners, session flow, onboarding, preprocessing orchestration, logging, cache coordination, cancellation, and fallback handling
 - `src/analysis/`: glossary extraction and summary heuristics
 - `src/providers/`: local and OpenAI-compatible providers
-- `src/knowledge/`: imported knowledge document store, official docs sync, token knowledge caching, token prebuild, and retrieval
+- `src/knowledge/`: imported knowledge document store, official docs sync, file preprocess caching, token knowledge fallback, and retrieval
 - `src/logging/`: output channel runtime logger
 - `src/storage/`: workspace cache paths and JSON persistence
 - `src/ui/`: glossary tree, explanation panel, and settings panel
@@ -262,7 +275,7 @@ More detail: `docs/ARCHITECTURE.md`
 - Source code comments should use English.
 - The extension prefers local cache and lightweight heuristics before remote calls.
 - Imported knowledge is workspace-scoped.
-- Remote token preprocessing is never committed with secrets because `.vscode/` remains ignored.
+- Remote debug secrets stay local because `.vscode/` remains ignored.
 
 ## License Note
 

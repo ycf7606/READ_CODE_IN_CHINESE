@@ -2,7 +2,9 @@ import {
   ExplanationRequest,
   ExplanationResponse,
   FollowUpRequest,
-  FollowUpResponse
+  FollowUpResponse,
+  SymbolPreprocessRequest,
+  SymbolPreprocessResponse
 } from "../contracts";
 import { ExtensionLogger } from "../logging/logger";
 import {
@@ -86,6 +88,27 @@ export class LocalExplanationProvider implements ExplanationProvider {
         "这段代码依赖了哪些上游变量或函数？",
         "如果我要改这里，最容易出错的点是什么？"
       ],
+      source: this.id,
+      latencyMs: Date.now() - startedAt
+    };
+  }
+
+  async preprocessSymbols(
+    request: SymbolPreprocessRequest
+  ): Promise<SymbolPreprocessResponse> {
+    const startedAt = Date.now();
+
+    return {
+      requestId: request.requestId,
+      languageId: request.languageId,
+      entries: request.candidates.map((candidate) => ({
+        term: candidate.term,
+        normalizedTerm: candidate.normalizedTerm,
+        category: candidate.category,
+        sourceLine: candidate.sourceLine,
+        summary: `\`${candidate.term}\` 是当前文件里的一个${candidate.category === "function" ? "函数" : "符号"}，需要结合附近逻辑理解它的具体职责。`,
+        generatedAt: new Date().toISOString()
+      })),
       source: this.id,
       latencyMs: Date.now() - startedAt
     };

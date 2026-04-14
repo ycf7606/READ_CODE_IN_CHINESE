@@ -2,6 +2,12 @@ export type DetailLevel = "fast" | "balanced" | "deep";
 export type ProfessionalLevel = "beginner" | "intermediate" | "expert";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type ProviderId = "local" | "openai-compatible";
+export type Occupation =
+  | "student"
+  | "developer"
+  | "data-scientist"
+  | "researcher"
+  | "maintainer";
 export type ExplanationGranularity =
   | "token"
   | "statement"
@@ -30,6 +36,13 @@ export type GlossaryCategory =
   | "import"
   | "constant"
   | "unknown";
+export type PreprocessedSymbolCategory = "variable" | "function" | "class" | "type";
+export type PreprocessStatus =
+  | "idle"
+  | "running"
+  | "completed"
+  | "failed"
+  | "canceled";
 
 export interface ExtensionSettings {
   autoExplainEnabled: boolean;
@@ -46,6 +59,7 @@ export interface ExtensionSettings {
   providerReasoningEffort: ReasoningEffort;
   detailLevel: DetailLevel;
   professionalLevel: ProfessionalLevel;
+  occupation: Occupation;
   sections: ExplanationSectionName[];
   userGoal: string;
   knowledgeTopK: number;
@@ -101,6 +115,7 @@ export interface ExplanationRequest {
   filePath: string;
   relativeFilePath: string;
   selectedText: string;
+  selectionPreview: string;
   granularity: ExplanationGranularity;
   detailLevel: DetailLevel;
   professionalLevel: ProfessionalLevel;
@@ -177,4 +192,66 @@ export interface TokenKnowledgeEntry {
 export interface TokenKnowledgeFile {
   languageId: string;
   entries: TokenKnowledgeEntry[];
+}
+
+export interface PreprocessedSymbolCandidate {
+  term: string;
+  normalizedTerm: string;
+  category: PreprocessedSymbolCategory;
+  sourceLine: number;
+  references: number;
+  score: number;
+}
+
+export interface PreprocessedSymbolEntry {
+  term: string;
+  normalizedTerm: string;
+  category: PreprocessedSymbolCategory;
+  sourceLine: number;
+  summary: string;
+  generatedAt: string;
+}
+
+export interface PreprocessedSymbolCacheFile {
+  languageId: string;
+  relativeFilePath: string;
+  sourceHash: string;
+  generatedAt: string;
+  entries: PreprocessedSymbolEntry[];
+}
+
+export interface SymbolPreprocessRequest {
+  requestId: string;
+  languageId: string;
+  filePath: string;
+  relativeFilePath: string;
+  professionalLevel: ProfessionalLevel;
+  occupation: Occupation;
+  sourceCode: string;
+  candidates: PreprocessedSymbolCandidate[];
+  userGoal: string;
+  customInstructions: string;
+}
+
+export interface SymbolPreprocessResponse {
+  requestId: string;
+  languageId: string;
+  entries: PreprocessedSymbolEntry[];
+  source: string;
+  latencyMs: number;
+}
+
+export interface PreprocessProgress {
+  status: PreprocessStatus;
+  totalCandidates: number;
+  processedCandidates: number;
+  totalSteps: number;
+  completedSteps: number;
+  batchCount: number;
+  relativeFilePath?: string;
+  currentStep?: string;
+  message?: string;
+  sourceHash?: string;
+  startedAt?: string;
+  completedAt?: string;
 }

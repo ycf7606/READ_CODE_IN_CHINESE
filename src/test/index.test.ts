@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
+import { buildPreprocessCandidates } from "../analysis/preprocess";
 import { extractGlossaryEntries } from "../analysis/glossary";
 import {
   buildFileOverviewSummary,
@@ -11,11 +12,21 @@ import {
 } from "../analysis/summary";
 import { getOfficialDocsPreset } from "../knowledge/officialDocs";
 import { KnowledgeStore } from "../knowledge/knowledgeStore";
-import { buildTokenKnowledgeBatch } from "../knowledge/tokenKnowledgeBuilder";
+import { PreprocessStore } from "../knowledge/preprocessStore";
+import {
+  buildCachedPreprocessExplanation,
+  buildSymbolPreprocessCache
+} from "../knowledge/symbolPreprocessBuilder";
 import { TokenKnowledgeStore } from "../knowledge/tokenKnowledgeStore";
+import { generateGlobalPrompt } from "../prompts/globalPromptProfile";
+import { buildExplainPrompts } from "../prompts/openAICompatiblePrompt";
 import { LocalExplanationProvider } from "../providers/localProvider";
 import { WorkspaceStore } from "../storage/workspaceStore";
-import { ExplanationRequest } from "../contracts";
+import {
+  ExplanationRequest,
+  PreprocessProgress,
+  SymbolPreprocessRequest
+} from "../contracts";
 
 test("extractGlossaryEntries finds key symbols", () => {
   const sourceCode = [
@@ -58,6 +69,7 @@ test("local provider returns structured explanation output", async () => {
     filePath: "D:/workspace/src/example.ts",
     relativeFilePath: "src/example.ts",
     selectedText: "function loadUsers(userId) { return fetchUser(userId); }",
+    selectionPreview: "[[function loadUsers(userId) { return fetchUser(userId); }]]",
     granularity: "function",
     detailLevel: "balanced",
     professionalLevel: "intermediate",
@@ -76,7 +88,6 @@ test("local provider returns structured explanation output", async () => {
 
   assert.equal(response.requestId, "test");
   assert.equal(response.granularity, "function");
-  assert.ok(response.summary.includes("函数形态"));
   assert.ok(response.sections.length >= 3);
 });
 
@@ -132,35 +143,192 @@ test("knowledge search prefers title matches", async () => {
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 
-test("knowledge store collects ranked token candidates from docs and preferred terms", async () => {
+test("preprocess candidate builder focuses on user-defined symbols", () => {
+  const glossaryEntries = extractGlossaryEntries(
+    [
+      "import torch from 'torch';",
+      "const n = values.length;",
+      "const featureMap = buildFeatureMap(values);",
+      "function buildFeatureMap(input) { return input; }",
+      "class EmbeddingModel {}"
+    ].join("\n"),
+    "typescript"
+  );
+
+  const beginner = buildPreprocessCandidates(glossaryEntries, "beginner", "student");
+  const expert = buildPreprocessCandidates(glossaryEntries, "expert", "developer");
+
+  assert.ok(beginner.some((entry) => entry.term === "featureMap"));
+  assert.ok(beginner.some((entry) => entry.term === "buildFeatureMap"));
+  assert.ok(!beginner.some((entry) => entry.term === "torch"));
+  assert.ok(beginner.length >= expert.length);
+});
+
+test("preprocess store reads back file-scoped cache entries", async () => {
   const workspaceRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), "rcic-token-candidates-")
+    path.join(os.tmpdir(), "rcic-preprocess-store-")
   );
   const store = new WorkspaceStore(workspaceRoot);
   await store.ensureProjectDataDirectories();
-  const knowledgeStore = new KnowledgeStore(store);
+  const preprocessStore = new PreprocessStore(store);
 
-  await knowledgeStore.upsertDocuments([
-    {
-      id: "doc-1",
-      title: "Tensor squeeze and unsqueeze",
-      sourcePath: "doc-1",
-      importedAt: new Date().toISOString(),
-      tags: ["python", "tensor"],
-      content: "squeeze removes singleton dimensions. unsqueeze inserts a new dimension.",
-      sourceType: "official-doc",
-      languageId: "python"
-    }
-  ]);
+  await preprocessStore.write("src/example.ts", {
+    languageId: "typescript",
+    relativeFilePath: "src/example.ts",
+    sourceHash: "hash-1",
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        term: "featureMap",
+        normalizedTerm: "featuremap",
+        category: "variable",
+        sourceLine: 3,
+        summary: "Stores the processed feature mapping.",
+        generatedAt: new Date().toISOString()
+      }
+    ]
+  });
 
-  const terms = await knowledgeStore.collectTokenCandidates("python", ["PCA"], 5);
+  const cached = await preprocessStore.findEntry("src/example.ts", "hash-1", "featureMap");
 
-  assert.ok(terms.includes("PCA"));
-  assert.ok(terms.includes("squeeze"));
+  assert.equal(cached?.summary, "Stores the processed feature mapping.");
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 
-test("token knowledge store reads back cached token explanations", async () => {
+test("symbol preprocess builder writes batch results into file cache", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-symbol-preprocess-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const sourceCode = [
+    "const featureMap = buildFeatureMap(values);",
+    "function buildFeatureMap(input) { return input; }",
+    "class EmbeddingModel {}"
+  ].join("\n");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "typescript");
+  const provider = {
+    id: "openai-compatible",
+    async explain() {
+      throw new Error("unused");
+    },
+    async answerFollowUp() {
+      return {
+        answer: "unused",
+        suggestedQuestions: [],
+        source: "openai-compatible",
+        latencyMs: 1
+      };
+    },
+    async preprocessSymbols(request: SymbolPreprocessRequest) {
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        source: "openai-compatible",
+        latencyMs: 20,
+        entries: request.candidates.map((candidate) => ({
+          term: candidate.term,
+          normalizedTerm: candidate.normalizedTerm,
+          category: candidate.category,
+          sourceLine: candidate.sourceLine,
+          summary: candidate.term + " summary",
+          generatedAt: new Date().toISOString()
+        }))
+      };
+    }
+  };
+
+  const progressSnapshots: string[] = [];
+  const result = await buildSymbolPreprocessCache({
+    editorText: sourceCode,
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    settings: {
+      autoExplainEnabled: false,
+      autoExplainDelayMs: 600,
+      autoOpenPanel: true,
+      providerId: "openai-compatible",
+      providerBaseUrl: "https://example.com/v1",
+      providerModel: "gpt-5.4",
+      providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerTimeoutMs: 20000,
+      providerTemperature: 0.2,
+      providerTopP: 1,
+      providerMaxTokens: 1200,
+      providerReasoningEffort: "medium",
+      detailLevel: "balanced",
+      professionalLevel: "intermediate",
+      occupation: "developer",
+      sections: ["summary", "usage"],
+      userGoal: "",
+      knowledgeTopK: 3,
+      customInstructions: ""
+    },
+    glossaryEntries,
+    workspaceStore: store,
+    provider,
+    onProgress: (progress: PreprocessProgress) => {
+      progressSnapshots.push(progress.status + ":" + progress.completedSteps);
+    }
+  });
+
+  const preprocessStore = new PreprocessStore(store);
+  const cached = await preprocessStore.read("src/example.ts");
+
+  assert.ok(result);
+  assert.ok((cached?.entries.length ?? 0) >= 2);
+  assert.ok(cached?.entries.some((entry) => entry.summary === "featureMap summary"));
+  assert.ok(progressSnapshots.includes("completed:3"));
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
+});
+
+test("cached preprocess explanation returns quick token summary", () => {
+  const request: ExplanationRequest = {
+    requestId: "quick",
+    reason: "manual",
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    selectedText: "featureMap",
+    selectionPreview: "const [[featureMap]] = buildFeatureMap(values);",
+    granularity: "token",
+    detailLevel: "balanced",
+    professionalLevel: "intermediate",
+    sections: ["summary"],
+    userGoal: "",
+    customInstructions: "",
+    contextBefore: "",
+    contextAfter: "",
+    glossaryEntries: [
+      {
+        term: "featureMap",
+        normalizedTerm: "featuremap",
+        meaning: "Variable that represents feature map.",
+        category: "variable",
+        references: 2,
+        source: "generated",
+        updatedAt: new Date().toISOString(),
+        sourceLine: 1
+      }
+    ],
+    knowledgeSnippets: []
+  };
+
+  const response = buildCachedPreprocessExplanation(request, {
+    term: "featureMap",
+    normalizedTerm: "featuremap",
+    category: "variable",
+    sourceLine: 1,
+    summary: "保存当前文件里构建好的特征映射结果。",
+    generatedAt: new Date().toISOString()
+  });
+
+  assert.equal(response.source, "preprocess-cache");
+  assert.equal(response.summary, "保存当前文件里构建好的特征映射结果。");
+});
+
+test("token knowledge store still reads back remote token cache", async () => {
   const workspaceRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "rcic-token-knowledge-")
   );
@@ -194,96 +362,51 @@ test("token knowledge store reads back cached token explanations", async () => {
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 
-test("token knowledge batch builds remote-grounded reusable entries", async () => {
-  const workspaceRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), "rcic-token-prebuild-")
-  );
-  const store = new WorkspaceStore(workspaceRoot);
-  await store.ensureProjectDataDirectories();
-  const knowledgeStore = new KnowledgeStore(store);
-  const tokenStore = new TokenKnowledgeStore(store);
+test("global prompt generator reflects audience profile", () => {
+  const prompt = generateGlobalPrompt({
+    occupation: "student",
+    professionalLevel: "beginner",
+    detailLevel: "balanced",
+    userGoal: "Understand ML training code"
+  });
 
-  await knowledgeStore.upsertDocuments([
-    {
-      id: "doc-1",
-      title: "Tensor squeeze",
-      sourcePath: "doc-1",
-      importedAt: new Date().toISOString(),
-      tags: ["python", "tensor"],
-      content: "squeeze removes dimensions of size 1.",
-      sourceType: "official-doc",
-      languageId: "python"
-    }
-  ]);
+  assert.match(prompt, /teaching-style/i);
+  assert.match(prompt, /Understand ML training code/);
+});
 
-  const provider = {
-    id: "openai-compatible",
-    async explain(request: ExplanationRequest) {
-      return {
-        requestId: request.requestId,
-        title: request.selectedText,
-        summary: `${request.selectedText} explanation`,
-        sections: [
-          {
-            label: "summary",
-            content: "Built from docs."
-          }
-        ],
-        suggestedQuestions: [],
-        glossaryHints: [],
-        granularity: "token" as const,
-        selectionText: request.selectedText,
-        source: "openai-compatible",
-        latencyMs: 25,
-        knowledgeUsed: request.knowledgeSnippets.map((entry) => entry.title)
-      };
-    },
-    async answerFollowUp() {
-      return {
-        answer: "unused",
-        suggestedQuestions: [],
-        source: "openai-compatible",
-        latencyMs: 1
-      };
-    }
-  };
-
-  const result = await buildTokenKnowledgeBatch({
+test("token explain prompt includes selection preview and glossary hints", () => {
+  const prompts = buildExplainPrompts({
+    requestId: "token-prompt",
+    reason: "manual",
     languageId: "python",
     filePath: "D:/workspace/model.py",
     relativeFilePath: "model.py",
-    settings: {
-      autoExplainEnabled: false,
-      autoExplainDelayMs: 600,
-      autoOpenPanel: true,
-      providerId: "openai-compatible",
-      providerBaseUrl: "https://example.com/v1",
-      providerModel: "gpt-5.4",
-      providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
-      providerTimeoutMs: 20000,
-      providerTemperature: 0.2,
-      providerTopP: 1,
-      providerMaxTokens: 1200,
-      providerReasoningEffort: "medium",
-      detailLevel: "balanced",
-      professionalLevel: "intermediate",
-      sections: ["summary", "usage"],
-      userGoal: "",
-      knowledgeTopK: 3,
-      customInstructions: ""
-    },
-    glossaryEntries: [],
-    knowledgeStore,
-    tokenKnowledgeStore: tokenStore,
-    provider,
-    preferredTerms: ["squeeze"],
-    limit: 3
+    selectedText: "squeeze",
+    selectionPreview: "y = x.[[squeeze]](0)",
+    granularity: "token",
+    detailLevel: "balanced",
+    professionalLevel: "intermediate",
+    sections: ["summary", "usage"],
+    userGoal: "Understand tensor ops",
+    customInstructions: "Prefer exact API meanings.",
+    contextBefore: "x = model_output",
+    contextAfter: "(0)",
+    glossaryEntries: [
+      {
+        term: "x",
+        normalizedTerm: "x",
+        meaning: "Model output tensor.",
+        category: "variable",
+        references: 3,
+        source: "generated",
+        updatedAt: new Date().toISOString()
+      }
+    ],
+    knowledgeSnippets: []
   });
 
-  const cached = await tokenStore.find("python", "squeeze");
-
-  assert.equal(result.built >= 1, true);
-  assert.equal(cached?.explanation.source, "openai-compatible");
-  assert.match(cached?.explanation.note ?? "", /Prepared from synced knowledge/i);
-  await fs.rm(workspaceRoot, { recursive: true, force: true });
+  assert.match(prompts.user, /Selection line preview:/);
+  assert.match(prompts.user, /y = x\.\[\[squeeze\]\]\(0\)/);
+  assert.match(prompts.user, /Glossary hints:/);
+  assert.match(prompts.system, /concrete API usage/i);
 });

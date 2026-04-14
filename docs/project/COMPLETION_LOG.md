@@ -428,3 +428,68 @@
   - `D:\project\浠ｇ爜缈昏瘧\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-11.md`
 - Verification:
   - Manual review of the updated context files
+
+### S12-01 Replace token prebuild with file-scoped symbol preprocessing
+
+- Stage: 12
+- Result: Replaced the broad token-prebuild-first path with a file-scoped preprocess cache that batches user-defined variables, functions, classes, and types using full-file context.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\analysis\preprocess.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\knowledge\preprocessStore.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\knowledge\symbolPreprocessBuilder.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\storage\workspaceStore.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S12-02 Abort stale explain and follow-up tasks
+
+- Stage: 12
+- Result: Added explicit cancellation for stale explanation, follow-up, and preprocess tasks so the newest selection or editor change wins instead of queueing outdated work.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\providerTypes.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\openAICompatibleProvider.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S12-03 Improve token grounding and remote response parsing
+
+- Stage: 12
+- Result: Added selection-line preview context and glossary hints to token prompts, and expanded remote response parsing so alternate content payload shapes can still be read before falling back.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\prompts\openAICompatiblePrompt.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\openAICompatibleProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\contracts.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\knowledge\tokenKnowledgeBuilder.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+  - Real remote smoke test for `squeeze` through the configured `gpt-5.4` endpoint
+
+### S12-04 Harden settings persistence and progress scoping
+
+- Stage: 12
+- Result: Made reasoning-effort updates persist through the same save path as the settings panel, sanitized numeric settings input, and scoped preprocess progress visibility to the active file.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\settingsPanel.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S12-05 Update docs and publish the Stage 12 summary
+
+- Stage: 12
+- Result: Updated the README, architecture notes, changelog, workboard, and added the Stage 12 summary so future sessions load the new preprocess-first behavior instead of the retired Stage 11 narrative.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-12.md`
+- Verification:
+  - Manual review of the updated context files

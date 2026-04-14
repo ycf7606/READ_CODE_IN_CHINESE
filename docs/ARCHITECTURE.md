@@ -8,7 +8,8 @@ The extension is designed to make source code easier to read by combining:
 - workspace glossary caching
 - optional retrieval from imported knowledge
 - official docs sync for active languages
-- token-level preprocessing, prebuild, and caching for repeated symbol explanations
+- file-level symbol preprocessing for repeated single-symbol explanations
+- token knowledge fallback for older repeated token lookups
 - optional remote model calls
 - runtime logging that is visible in VS Code
 
@@ -20,7 +21,8 @@ The extension is designed to make source code easier to read by combining:
 - manages selection listeners
 - keeps the panel synced with the current editor selection
 - builds explanation requests
-- coordinates glossary refresh, workspace index generation, official docs sync, token cache lookup, token prebuild, onboarding, and follow-up chat
+- coordinates glossary refresh, workspace index generation, official docs sync, file preprocess lookup/build, onboarding, and follow-up chat
+- cancels stale explain and follow-up tasks when newer user context arrives
 - logs execution flow and provider fallbacks
 
 ### `src/analysis/`
@@ -38,8 +40,10 @@ The extension is designed to make source code easier to read by combining:
 
 - `knowledgeStore.ts`: imports `.md`, `.txt`, and `.json` documents, stores them in workspace cache, and retrieves top keyword matches
 - `officialDocs.ts`: downloads preset official/reference language documents and chunks them into the knowledge library
-- `tokenKnowledgeStore.ts`: stores successful token-level explanations so repeated symbol lookups can avoid repeated model calls
-- `tokenKnowledgeBuilder.ts`: turns synced knowledge plus remote reasoning into reusable token entries
+- `preprocessStore.ts`: stores file-scoped batches of user-defined symbol summaries
+- `symbolPreprocessBuilder.ts`: ranks glossary symbols, sends one full-file batch request, and writes the preprocess cache
+- `tokenKnowledgeStore.ts`: stores successful token-level explanations as a compatibility fallback cache
+- `tokenKnowledgeBuilder.ts`: older token-prebuild helper retained for compatibility paths
 
 ### `src/logging/`
 
@@ -54,7 +58,7 @@ The extension is designed to make source code easier to read by combining:
 
 - `glossaryTreeProvider.ts`: Explorer sidebar glossary
 - `explanationPanel.ts`: explanation, selection metadata, glossary snapshot, workspace preview, and follow-up chat
-- `settingsPanel.ts`: first-run onboarding, provider controls, token prebuild trigger, and editable prompt / hyperparameter controls
+- `settingsPanel.ts`: first-run onboarding, provider controls, preprocess trigger, occupation presets, prompt generation, and editable prompt / hyperparameter controls
 
 ## Data Flow
 
@@ -64,15 +68,16 @@ The extension is designed to make source code easier to read by combining:
 4. If the panel is open, selection changes automatically trigger explanation refresh
 5. Glossary cache is loaded or regenerated
 6. Knowledge snippets are retrieved from imported or synced documents
-7. If the selection is a token, the extension checks the token knowledge cache before calling the model
-8. On token cache miss, the extension first tries to prebuild a reusable token entry from synced knowledge and remote reasoning
-9. Explanation request is built with user goal, custom prompt instructions, and provider hyperparameters
-10. Local or remote provider returns a structured explanation
-11. Successful token explanations can be written into the token knowledge cache
-12. Official docs sync can immediately warm token knowledge for the active language
-13. Panel, glossary UI, and status metadata update
-14. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
-15. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
+7. If the selection is a token, the extension first checks the active file's preprocess cache
+8. On preprocess-cache miss, it checks the older token knowledge cache
+9. Explanation request is built with user goal, custom prompt instructions, selection-line preview, and provider hyperparameters
+10. Local or remote provider returns a structured explanation grounded in the exact callsite context
+11. In the background, the extension can preprocess user-defined file symbols in one full-file batch
+12. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins
+13. Successful remote token explanations can still be written into the token knowledge cache
+14. Panel, glossary UI, preprocess progress, and status metadata update
+15. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
+16. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 
@@ -82,6 +87,7 @@ Workspace-local cache directory:
 .read-code-in-chinese/
   glossary/
   knowledge/
+  preprocess/
   token-knowledge/
   reports/
   workspace-index.json
@@ -96,4 +102,5 @@ Workspace-local cache directory:
 - minimal assumptions about the user's model provider
 - user-configurable prompt instructions and remote hyperparameters
 - VS Code-native, low-noise UI
-- faster repeated token explanations through knowledge-grounded preprocessing and caching
+- faster repeated symbol explanations through file-scoped preprocessing and caching
+- correctness over stale work by canceling outdated tasks quickly

@@ -3,6 +3,7 @@ import * as path from "path";
 import {
   GlossaryCacheFile,
   KnowledgeLibraryFile,
+  PreprocessedSymbolCacheFile,
   TokenKnowledgeFile,
   WorkspaceIndex
 } from "../contracts";
@@ -16,6 +17,7 @@ export class WorkspaceStore {
       fs.mkdir(this.getProjectDataDirectory(), { recursive: true }),
       fs.mkdir(this.getGlossaryDirectory(), { recursive: true }),
       fs.mkdir(this.getKnowledgeDirectory(), { recursive: true }),
+      fs.mkdir(this.getPreprocessDirectory(), { recursive: true }),
       fs.mkdir(this.getTokenKnowledgeDirectory(), { recursive: true }),
       fs.mkdir(this.getReportDirectory(), { recursive: true })
     ]);
@@ -37,6 +39,10 @@ export class WorkspaceStore {
     return path.join(this.getProjectDataDirectory(), "reports");
   }
 
+  getPreprocessDirectory(): string {
+    return path.join(this.getProjectDataDirectory(), "preprocess");
+  }
+
   getTokenKnowledgeDirectory(): string {
     return path.join(this.getProjectDataDirectory(), "token-knowledge");
   }
@@ -55,6 +61,13 @@ export class WorkspaceStore {
 
   getTokenKnowledgePath(languageId: string): string {
     return path.join(this.getTokenKnowledgeDirectory(), `${slugifyRelativePath(languageId)}.json`);
+  }
+
+  getPreprocessCachePath(relativeFilePath: string): string {
+    return path.join(
+      this.getPreprocessDirectory(),
+      `${slugifyRelativePath(relativeFilePath)}.json`
+    );
   }
 
   getGlossaryCachePath(relativeFilePath: string): string {
@@ -85,6 +98,21 @@ export class WorkspaceStore {
 
   async writeKnowledgeLibrary(library: KnowledgeLibraryFile): Promise<void> {
     await this.writeJson(this.getKnowledgeLibraryPath(), library);
+  }
+
+  async readPreprocessCache(
+    relativeFilePath: string
+  ): Promise<PreprocessedSymbolCacheFile | undefined> {
+    return this.readJson<PreprocessedSymbolCacheFile>(
+      this.getPreprocessCachePath(relativeFilePath)
+    );
+  }
+
+  async writePreprocessCache(
+    relativeFilePath: string,
+    cacheFile: PreprocessedSymbolCacheFile
+  ): Promise<void> {
+    await this.writeJson(this.getPreprocessCachePath(relativeFilePath), cacheFile);
   }
 
   async readTokenKnowledge(languageId: string): Promise<TokenKnowledgeFile> {

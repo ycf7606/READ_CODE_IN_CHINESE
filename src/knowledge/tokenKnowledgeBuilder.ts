@@ -191,6 +191,7 @@ async function createTokenKnowledgeRequest(
     filePath: options.filePath,
     relativeFilePath: options.relativeFilePath,
     selectedText: options.term,
+    selectionPreview: `${options.contextBefore ?? ""}[[${options.term}]]${options.contextAfter ?? ""}`,
     granularity: "token",
     detailLevel: options.settings.detailLevel,
     professionalLevel: options.settings.professionalLevel,

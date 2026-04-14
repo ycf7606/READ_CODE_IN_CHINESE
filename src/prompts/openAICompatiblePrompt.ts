@@ -1,6 +1,7 @@
 import {
   ExplanationRequest,
-  FollowUpRequest
+  FollowUpRequest,
+  SymbolPreprocessRequest
 } from "../contracts";
 
 export function buildExplainPrompts(request: ExplanationRequest): {
@@ -66,6 +67,10 @@ function buildTokenExplainPrompts(request: ExplanationRequest): {
   const knowledgeContext = request.knowledgeSnippets
     .map((snippet) => `- ${snippet.title}: ${snippet.excerpt}`)
     .join("\n");
+  const glossaryContext = request.glossaryEntries
+    .slice(0, 8)
+    .map((entry) => `- ${entry.term}: ${entry.meaning}`)
+    .join("\n");
 
   return {
     system: [
@@ -73,7 +78,9 @@ function buildTokenExplainPrompts(request: ExplanationRequest): {
       "Return valid JSON only.",
       "Use this shape:",
       '{"title":"string","summary":"string","sections":[{"label":"string","content":"string"}],"suggestedQuestions":["string"],"glossaryHints":[{"term":"string","meaning":"string","category":"variable"}],"note":"string"}',
-      "Focus on the token's exact role at this callsite.",
+      "Focus on the token's exact role at this callsite and in the current line.",
+      "If the token is a library, framework, or API symbol, explain that concrete API usage here instead of giving a generic placeholder summary.",
+      "If the meaning is still ambiguous, say exactly what context is missing.",
       "Avoid generic placeholder wording.",
       request.customInstructions
     ].join(" "),
@@ -82,11 +89,17 @@ function buildTokenExplainPrompts(request: ExplanationRequest): {
       `Token: ${request.selectedText}`,
       `Goal: ${request.userGoal || "Explain the exact meaning of this token."}`,
       "",
+      "Selection line preview:",
+      request.selectionPreview || "(none)",
+      "",
       "Callsite before:",
       request.contextBefore || "(none)",
       "",
       "Callsite after:",
       request.contextAfter || "(none)",
+      "",
+      "Glossary hints:",
+      glossaryContext || "(none)",
       "",
       "Knowledge snippets:",
       knowledgeContext || "(none)"
@@ -120,6 +133,43 @@ export function buildFollowUpPrompts(request: FollowUpRequest): {
       request.request.selectedText,
       "",
       `User question: ${request.question}`
+    ].join("\n")
+  };
+}
+
+export function buildSymbolPreprocessPrompts(request: SymbolPreprocessRequest): {
+  system: string;
+  user: string;
+} {
+  const candidateLines = request.candidates
+    .map(
+      (candidate) =>
+        `- ${candidate.term} | category=${candidate.category} | line=${candidate.sourceLine} | refs=${candidate.references}`
+    )
+    .join("\n");
+
+  return {
+    system: [
+      "You summarize user-defined code symbols in concise Chinese.",
+      "Respond with valid JSON only.",
+      'Use this exact shape: {"entries":[{"term":"string","summary":"string"}]}',
+      "Return one short sentence per symbol.",
+      "Focus only on the symbol's role in this file.",
+      "Do not add sections, markdown, or extra keys.",
+      "Do not explain imports, built-in syntax, or generic language rules.",
+      request.customInstructions || ""
+    ].join(" "),
+    user: [
+      `Language: ${request.languageId}`,
+      `Occupation: ${request.occupation}`,
+      `Professional level: ${request.professionalLevel}`,
+      `Goal: ${request.userGoal || "Prepare quick symbol explanations for this file."}`,
+      "",
+      "Candidate symbols:",
+      candidateLines || "(none)",
+      "",
+      "Full file context:",
+      request.sourceCode
     ].join("\n")
   };
 }

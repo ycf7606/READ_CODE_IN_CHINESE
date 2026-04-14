@@ -1,18 +1,22 @@
-﻿import {
+import {
   ChatTurn,
   ExplanationRequest,
   ExplanationResponse,
   ExtensionSettings,
   FollowUpRequest,
   FollowUpResponse,
-  GlossaryEntry
+  GlossaryEntry,
+  PreprocessedSymbolEntry,
+  SymbolPreprocessRequest,
+  SymbolPreprocessResponse
 } from "../contracts";
 import { ExtensionLogger } from "../logging/logger";
 import {
   buildExplainPrompts,
-  buildFollowUpPrompts
+  buildFollowUpPrompts,
+  buildSymbolPreprocessPrompts
 } from "../prompts/openAICompatiblePrompt";
-import { ExplanationProvider } from "./providerTypes";
+import { ExplanationProvider, ProviderCallOptions } from "./providerTypes";
 
 interface ChatCompletionMessage {
   role: "system" | "user" | "assistant";
@@ -49,7 +53,10 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
     private readonly logger?: ExtensionLogger
   ) {}
 
-  async explain(request: ExplanationRequest): Promise<ExplanationResponse> {
+  async explain(
+    request: ExplanationRequest,
+    options?: ProviderCallOptions
+  ): Promise<ExplanationResponse> {
     const startedAt = Date.now();
     const prompts = buildExplainPrompts(request);
     const content = await this.createChatCompletion(
@@ -57,7 +64,8 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
         { role: "system", content: prompts.system },
         { role: "user", content: prompts.user }
       ],
-      "explain"
+      "explain",
+      options?.signal
     );
     const parsedResponse = parseJsonResponse(content);
 
@@ -86,7 +94,10 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
     };
   }
 
-  async answerFollowUp(request: FollowUpRequest): Promise<FollowUpResponse> {
+  async answerFollowUp(
+    request: FollowUpRequest,
+    options?: ProviderCallOptions
+  ): Promise<FollowUpResponse> {
     const startedAt = Date.now();
     const prompts = buildFollowUpPrompts(request);
     const historyMessages = request.chatHistory
@@ -101,7 +112,8 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
         ...historyMessages,
         { role: "user", content: prompts.user }
       ],
-      "follow-up"
+      "follow-up",
+      options?.signal
     );
 
     this.logger?.info("Remote provider answered follow-up", {
@@ -120,9 +132,35 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
     };
   }
 
+  async preprocessSymbols(
+    request: SymbolPreprocessRequest,
+    options?: ProviderCallOptions
+  ): Promise<SymbolPreprocessResponse> {
+    const startedAt = Date.now();
+    const prompts = buildSymbolPreprocessPrompts(request);
+    const content = await this.createChatCompletion(
+      [
+        { role: "system", content: prompts.system },
+        { role: "user", content: prompts.user }
+      ],
+      "preprocess",
+      options?.signal
+    );
+    const parsedResponse = parseJsonResponse(content);
+
+    return {
+      requestId: request.requestId,
+      languageId: request.languageId,
+      entries: normalizePreprocessEntries(parsedResponse.entries, request.candidates),
+      source: this.id,
+      latencyMs: Date.now() - startedAt
+    };
+  }
+
   private async createChatCompletion(
     messages: ChatCompletionMessage[],
-    mode: "explain" | "follow-up"
+    mode: "explain" | "follow-up" | "preprocess",
+    signal?: AbortSignal
   ): Promise<string> {
     const apiKey = process.env[this.settings.providerApiKeyEnvVar];
 
@@ -139,6 +177,8 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
     }
 
     const controller = new AbortController();
+    const abortHandler = () => controller.abort();
+    signal?.addEventListener("abort", abortHandler);
     const timeoutHandle = setTimeout(
       () => controller.abort(),
       this.settings.providerTimeoutMs
@@ -150,6 +190,10 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
 
       for (let round = 0; round < 2; round += 1) {
         for (const payloadBody of payloadCandidates) {
+          if (controller.signal.aborted) {
+            throw new Error("Request aborted");
+          }
+
           logicalAttempt += 1;
           this.logger?.info("Sending remote provider request", {
             mode,
@@ -202,6 +246,7 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
       throw error;
     } finally {
       clearTimeout(timeoutHandle);
+      signal?.removeEventListener("abort", abortHandler);
     }
   }
 }
@@ -209,7 +254,7 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
 function buildPayloadCandidates(
   settings: ExtensionSettings,
   messages: ChatCompletionMessage[],
-  mode: "explain" | "follow-up"
+  mode: "explain" | "follow-up" | "preprocess"
 ): Array<Record<string, unknown>> {
   const basePayload = {
     model: settings.providerModel,
@@ -226,6 +271,24 @@ function buildPayloadCandidates(
         reasoning_effort: settings.providerReasoningEffort
       },
       basePayload
+    ];
+  }
+
+  if (mode === "preprocess") {
+    return [
+      {
+        ...basePayload,
+        temperature: 0,
+        max_tokens: Math.min(settings.providerMaxTokens, 1400),
+        reasoning_effort: "low",
+        response_format: { type: "json_object" }
+      },
+      {
+        ...basePayload,
+        temperature: 0,
+        max_tokens: Math.min(settings.providerMaxTokens, 1400),
+        response_format: { type: "json_object" }
+      }
     ];
   }
 
@@ -380,53 +443,109 @@ function normalizeGlossaryHints(value: unknown): GlossaryEntry[] {
   return normalizedEntries;
 }
 
+function normalizePreprocessEntries(
+  value: unknown,
+  candidates: SymbolPreprocessRequest["candidates"]
+): PreprocessedSymbolEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const candidateMap = new Map(
+    candidates.map((candidate) => [candidate.normalizedTerm, candidate])
+  );
+
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return undefined;
+      }
+
+      const candidate = entry as { term?: unknown; summary?: unknown };
+      const term = typeof candidate.term === "string" ? candidate.term.trim() : "";
+      const summary = typeof candidate.summary === "string" ? candidate.summary.trim() : "";
+
+      if (!term || !summary) {
+        return undefined;
+      }
+
+      const matchedCandidate = candidateMap.get(term.toLowerCase());
+
+      if (!matchedCandidate) {
+        return undefined;
+      }
+
+      return {
+        term: matchedCandidate.term,
+        normalizedTerm: matchedCandidate.normalizedTerm,
+        category: matchedCandidate.category,
+        sourceLine: matchedCandidate.sourceLine,
+        summary,
+        generatedAt: new Date().toISOString()
+      };
+    })
+    .filter((entry): entry is PreprocessedSymbolEntry => Boolean(entry));
+}
+
 function readStringValue(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
 function extractMessageContent(choice: ChatCompletionChoice | undefined): string | undefined {
-  if (typeof choice?.text === "string" && choice.text.trim()) {
-    return choice.text.trim();
-  }
+  const directCandidates: unknown[] = [
+    choice?.text,
+    choice?.message?.content,
+    choice?.message?.reasoning_content,
+    (choice as Record<string, unknown> | undefined)?.delta
+  ];
 
-  const content = choice?.message?.content;
+  for (const candidate of directCandidates) {
+    const text = extractTextContent(candidate);
 
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (content && typeof content === "object" && !Array.isArray(content)) {
-    const text =
-      typeof content.text === "string"
-        ? content.text
-        : typeof content.value === "string"
-          ? content.value
-          : "";
-
-    if (text.trim()) {
-      return text.trim();
+    if (text) {
+      return text;
     }
   }
 
-  if (Array.isArray(content)) {
-    return content
-      .map((entry) => {
-        if (typeof entry?.text === "string" && entry.text) {
-          return entry.text;
-        }
+  return undefined;
+}
 
-        if (typeof entry?.value === "string" && entry.value) {
-          return entry.value;
-        }
-
-        return "";
-      })
-      .join("")
-      .trim();
+function extractTextContent(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
   }
 
-  if (typeof choice?.message?.reasoning_content === "string") {
-    return choice.message.reasoning_content.trim();
+  if (Array.isArray(value)) {
+    const joined = value
+      .map((entry) => extractTextContent(entry))
+      .filter((entry): entry is string => Boolean(entry))
+      .join("")
+      .trim();
+
+    return joined || undefined;
+  }
+
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const objectValue = value as Record<string, unknown>;
+  const preferredKeys = [
+    "content",
+    "text",
+    "value",
+    "output_text",
+    "reasoning_content",
+    "refusal"
+  ];
+
+  for (const key of preferredKeys) {
+    const text = extractTextContent(objectValue[key]);
+
+    if (text) {
+      return text;
+    }
   }
 
   return undefined;
@@ -443,4 +562,3 @@ async function safeReadText(response: Response): Promise<string> {
 function shortenWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 240);
 }
-

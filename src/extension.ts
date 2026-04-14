@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
+import { buildPreprocessCandidates } from "./analysis/preprocess";
 import { extractGlossaryEntries, mergeGlossaryWithUserOverrides } from "./analysis/glossary";
 import {
   createWorkspaceFileSummary,
@@ -16,16 +17,19 @@ import {
   ExplanationGranularity,
   GlossaryCacheFile,
   GlossaryEntry,
+  PreprocessProgress,
   WorkspaceIndex
 } from "./contracts";
 import { syncOfficialDocsForLanguage } from "./knowledge/officialDocs";
 import { KnowledgeStore } from "./knowledge/knowledgeStore";
+import { PreprocessStore } from "./knowledge/preprocessStore";
 import {
-  buildSingleTokenKnowledge,
-  buildTokenKnowledgeBatch
-} from "./knowledge/tokenKnowledgeBuilder";
+  buildCachedPreprocessExplanation,
+  buildSymbolPreprocessCache
+} from "./knowledge/symbolPreprocessBuilder";
 import { TokenKnowledgeStore } from "./knowledge/tokenKnowledgeStore";
 import { ExtensionLogger } from "./logging/logger";
+import { generateGlobalPrompt } from "./prompts/globalPromptProfile";
 import { createProvider } from "./providers/createProvider";
 import { ExplanationProvider } from "./providers/providerTypes";
 import { WorkspaceStore } from "./storage/workspaceStore";
@@ -41,6 +45,12 @@ interface SessionState {
   workspaceIndex?: WorkspaceIndex;
   glossaryEntries: GlossaryEntry[];
   currentGranularity?: ExplanationGranularity;
+  preprocessProgress?: PreprocessProgress;
+}
+
+interface ActiveTaskState {
+  version: number;
+  controller: AbortController;
 }
 
 interface ExplainSelectionOptions {
@@ -50,7 +60,7 @@ interface ExplainSelectionOptions {
 }
 
 const ACTIVE_GLOSSARY_VIEW = "readCodeInChinese.glossaryView";
-const DEFAULT_TOKEN_PREBUILD_LIMIT = 18;
+const PREPROCESS_DELAY_MS = 500;
 
 export function activate(context: vscode.ExtensionContext): void {
   const logger = new ExtensionLogger();
@@ -64,7 +74,14 @@ export function activate(context: vscode.ExtensionContext): void {
     glossaryEntries: []
   };
   let autoExplainTimeout: NodeJS.Timeout | undefined;
+  let preprocessTimeout: NodeJS.Timeout | undefined;
   let lastAutoExplainSignature = "";
+  let explainTaskVersion = 0;
+  let followUpTaskVersion = 0;
+  let preprocessTaskVersion = 0;
+  let activeExplainTask: ActiveTaskState | undefined;
+  let activeFollowUpTask: ActiveTaskState | undefined;
+  let activePreprocessTask: ActiveTaskState | undefined;
 
   const panel = new ExplanationPanel(async (message) => {
     if (message.type === "ready") {
@@ -78,11 +95,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     if (message.type === "setReasoningEffort") {
-      await updateConfigurationValue(
-        "provider.reasoningEffort",
-        message.reasoningEffort,
-        vscode.ConfigurationTarget.Global
-      );
+      await persistConfigurationValue("provider.reasoningEffort", message.reasoningEffort);
       return;
     }
 
@@ -96,11 +109,20 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    if (message.type === "buildTokenKnowledge") {
-      await buildTokenKnowledgeForActiveLanguage({
-        limit: DEFAULT_TOKEN_PREBUILD_LIMIT,
-        showNotifications: true
-      });
+    if (message.type === "runPreprocess") {
+      await runPreprocessForActiveEditor(true);
+      return;
+    }
+
+    if (message.type === "generatePrompt") {
+      settingsPanel.setDraftGlobalPrompt(
+        generateGlobalPrompt({
+          occupation: message.payload.occupation,
+          professionalLevel: message.payload.professionalLevel,
+          detailLevel: message.payload.detailLevel,
+          userGoal: message.payload.userGoal
+        })
+      );
       return;
     }
 
@@ -205,10 +227,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       "readCodeInChinese.buildTokenKnowledgeForActiveLanguage",
       async () => {
-        await buildTokenKnowledgeForActiveLanguage({
-          limit: DEFAULT_TOKEN_PREBUILD_LIMIT,
-          showNotifications: true
-        });
+        await runPreprocessForActiveEditor(true);
       }
     )
   ];
@@ -222,24 +241,34 @@ export function activate(context: vscode.ExtensionContext): void {
       if (event.affectsConfiguration(CONFIG_NAMESPACE)) {
         logger.info("Configuration changed");
         logger.info("Effective settings", summarizeSettings(getSettings()));
+        cancelPreprocessTask("Configuration changed");
         updateStatusBar(statusBarItem);
         syncPanelContext(vscode.window.activeTextEditor);
+        schedulePreprocessForActiveEditor();
       }
     }),
     vscode.window.onDidChangeActiveTextEditor(async (editor) => {
+      cancelExplainTask("Active editor changed");
+      cancelFollowUpTask("Active editor changed");
+      cancelPreprocessTask("Active editor changed");
       logger.info("Active editor changed", {
         filePath: editor?.document.uri.fsPath,
         languageId: editor?.document.languageId
       });
       syncPanelContext(editor);
       await refreshGlossaryForActiveEditor(false);
+      schedulePreprocessForActiveEditor();
     }),
     vscode.workspace.onDidSaveTextDocument(async (document) => {
       if (vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString()) {
         logger.info("Active document saved", {
           filePath: document.uri.fsPath
         });
+        cancelExplainTask("Active document saved");
+        cancelFollowUpTask("Active document saved");
+        cancelPreprocessTask("Active document saved");
         await refreshGlossaryForActiveEditor(false);
+        schedulePreprocessForActiveEditor();
       }
     }),
     vscode.window.onDidChangeTextEditorSelection(async (event) => {
@@ -292,11 +321,118 @@ export function activate(context: vscode.ExtensionContext): void {
   updateStatusBar(statusBarItem);
   syncPanelContext(vscode.window.activeTextEditor);
   void refreshGlossaryForActiveEditor(false);
+  schedulePreprocessForActiveEditor();
   if (!context.globalState.get<boolean>("readCodeInChinese.onboardingShown")) {
     void context.globalState.update("readCodeInChinese.onboardingShown", true);
     setTimeout(() => {
       settingsPanel.show(getSettings());
     }, 250);
+  }
+
+  function startTask(
+    kind: "explain" | "follow-up" | "preprocess"
+  ): { version: number; controller: AbortController } {
+    const controller = new AbortController();
+
+    if (kind === "explain") {
+      activeExplainTask?.controller.abort();
+      explainTaskVersion += 1;
+      activeExplainTask = {
+        version: explainTaskVersion,
+        controller
+      };
+      return activeExplainTask;
+    }
+
+    if (kind === "follow-up") {
+      activeFollowUpTask?.controller.abort();
+      followUpTaskVersion += 1;
+      activeFollowUpTask = {
+        version: followUpTaskVersion,
+        controller
+      };
+      return activeFollowUpTask;
+    }
+
+    activePreprocessTask?.controller.abort();
+    preprocessTaskVersion += 1;
+    activePreprocessTask = {
+      version: preprocessTaskVersion,
+      controller
+    };
+    return activePreprocessTask;
+  }
+
+  function isTaskCurrent(
+    kind: "explain" | "follow-up" | "preprocess",
+    version: number
+  ): boolean {
+    if (kind === "explain") {
+      return activeExplainTask?.version === version;
+    }
+
+    if (kind === "follow-up") {
+      return activeFollowUpTask?.version === version;
+    }
+
+    return activePreprocessTask?.version === version;
+  }
+
+  function cancelPreprocessTask(reason: string): void {
+    clearTimeout(preprocessTimeout);
+    if (activePreprocessTask) {
+      const relativeFilePath =
+        sessionState.preprocessProgress?.relativeFilePath ??
+        getRelativeFilePath(vscode.window.activeTextEditor);
+      logger.info("Canceled preprocess task", { reason, version: activePreprocessTask.version });
+      activePreprocessTask.controller.abort();
+      activePreprocessTask = undefined;
+      sessionState.preprocessProgress = {
+        ...(sessionState.preprocessProgress ?? {
+          totalCandidates: 0,
+          processedCandidates: 0,
+          totalSteps: 3,
+          completedSteps: 0,
+          batchCount: 0,
+          startedAt: new Date().toISOString()
+        }),
+        relativeFilePath,
+        status: "canceled",
+        message: reason,
+        completedAt: new Date().toISOString()
+      };
+      panel.setState({
+        preprocessProgress: getVisiblePreprocessProgress(
+          sessionState.preprocessProgress,
+          vscode.window.activeTextEditor
+        )
+      });
+    }
+  }
+
+  function cancelExplainTask(reason: string): void {
+    if (!activeExplainTask) {
+      return;
+    }
+
+    logger.info("Canceled explanation task", { reason, version: activeExplainTask.version });
+    activeExplainTask.controller.abort();
+  }
+
+  function cancelFollowUpTask(reason: string): void {
+    if (!activeFollowUpTask) {
+      return;
+    }
+
+    logger.info("Canceled follow-up task", { reason, version: activeFollowUpTask.version });
+    activeFollowUpTask.controller.abort();
+  }
+
+  function schedulePreprocessForActiveEditor(): void {
+    clearTimeout(preprocessTimeout);
+    preprocessTimeout = setTimeout(() => {
+      void runPreprocessForActiveEditor(false);
+    }, PREPROCESS_DELAY_MS);
   }
 
   async function explainSelection(
@@ -331,6 +467,10 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
+    cancelFollowUpTask("New selection explanation started");
+    cancelPreprocessTask("New selection explanation started");
+    const task = startTask("explain");
+
     const execute = async (): Promise<void> => {
       const projectContext = getProjectContext(editor.document, logger);
 
@@ -348,6 +488,7 @@ export function activate(context: vscode.ExtensionContext): void {
         selectedText,
         editor.selection.end.line - editor.selection.start.line + 1
       );
+      const sourceHash = createContentHash(editor.document.getText());
 
       if (options.revealPanel || panel.isWatchingSelection() || getSettings().autoOpenPanel) {
         panel.show();
@@ -373,11 +514,17 @@ export function activate(context: vscode.ExtensionContext): void {
         false,
         logger
       );
+
+      if (!isTaskCurrent("explain", task.version) || task.controller.signal.aborted) {
+        return;
+      }
+
       sessionState.glossaryEntries = glossaryEntries;
       glossaryTreeProvider.setEntries(glossaryEntries);
+      const preprocessStore = new PreprocessStore(workspaceStore);
       const tokenKnowledgeStore = new TokenKnowledgeStore(workspaceStore, logger);
 
-      let request = await createExplanationRequest(
+      const request = await createExplanationRequest(
         editor,
         selectedText,
         granularity,
@@ -389,59 +536,39 @@ export function activate(context: vscode.ExtensionContext): void {
       let response: ExplanationResponse | undefined;
 
       if (granularity === "token") {
-        const cachedToken = await tokenKnowledgeStore.find(
-          editor.document.languageId,
+        const preprocessedEntry = await preprocessStore.findEntry(
+          relativeFilePath,
+          sourceHash,
           selectedText
         );
 
-        if (cachedToken) {
-          logger.info("Token knowledge cache hit", {
-            languageId: editor.document.languageId,
+        if (preprocessedEntry) {
+          logger.info("Preprocess cache hit", {
+            relativeFilePath,
             term: selectedText
           });
-          response = {
-            ...cachedToken.explanation,
-            requestId: request.requestId,
-            selectionText: selectedText,
-            granularity: "token",
-            source: "token-knowledge-cache",
-            latencyMs: 0,
-            note:
-              cachedToken.explanation.note ??
-              "Used cached token knowledge built from prior preprocessing."
-          };
+          response = buildCachedPreprocessExplanation(request, preprocessedEntry);
         } else {
-          const provider = createProvider(getSettings(), logger);
-          const builtToken = await buildSingleTokenKnowledge({
-            languageId: editor.document.languageId,
-            filePath: editor.document.uri.fsPath,
-            relativeFilePath,
-            term: selectedText,
-            settings: getSettings(),
-            glossaryEntries,
-            knowledgeStore,
-            tokenKnowledgeStore,
-            provider,
-            logger,
-            contextBefore: request.contextBefore,
-            contextAfter: request.contextAfter
-          });
+          const cachedToken = await tokenKnowledgeStore.find(
+            editor.document.languageId,
+            selectedText
+          );
 
-          if (builtToken) {
-            logger.info("Token knowledge built on demand", {
+          if (cachedToken) {
+            logger.info("Token knowledge cache hit", {
               languageId: editor.document.languageId,
               term: selectedText
             });
             response = {
-              ...builtToken,
+              ...cachedToken.explanation,
               requestId: request.requestId,
               selectionText: selectedText,
               granularity: "token",
-              source: builtToken.source,
-              latencyMs: builtToken.latencyMs,
+              source: "token-knowledge-cache",
+              latencyMs: 0,
               note:
-                builtToken.note ??
-                "Prepared token knowledge with remote reasoning and cached it."
+                cachedToken.explanation.note ??
+                "Used cached token knowledge built from a previous remote explanation."
             };
           }
         }
@@ -449,11 +576,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
       if (!response) {
         const provider = createProvider(getSettings(), logger);
-        response = await runExplanationWithFallback(provider, request, logger);
+        response = await runExplanationWithFallback(provider, request, logger, task.controller.signal);
 
         if (granularity === "token" && response.source === "openai-compatible") {
           await tokenKnowledgeStore.upsert(editor.document.languageId, selectedText, response);
         }
+      }
+
+      if (!isTaskCurrent("explain", task.version) || task.controller.signal.aborted) {
+        logger.info("Dropped stale explanation result", {
+          requestId: request.requestId,
+          version: task.version
+        });
+        return;
       }
 
       sessionState.request = request;
@@ -478,6 +613,7 @@ export function activate(context: vscode.ExtensionContext): void {
       logger.info("Explanation completed", {
         reason,
         requestId: request.requestId,
+        version: task.version,
         source: response.source,
         latencyMs: response.latencyMs,
         knowledgeUsed: response.knowledgeUsed
@@ -487,12 +623,15 @@ export function activate(context: vscode.ExtensionContext): void {
         panel.show();
         syncPanelContext(editor);
       }
+
+      schedulePreprocessForActiveEditor();
     };
 
     logger.info("Explanation requested", {
       reason,
       filePath: editor.document.uri.fsPath,
-      selection: formatSelectionLabel(editor.selection)
+      selection: formatSelectionLabel(editor.selection),
+      version: task.version
     });
 
     if (options.showProgress) {
@@ -502,12 +641,60 @@ export function activate(context: vscode.ExtensionContext): void {
           title: "Read Code In Chinese: generating explanation",
           cancellable: false
         },
-        execute
+        async () => {
+          try {
+            await execute();
+          } catch (error) {
+            if (isAbortLikeError(error)) {
+              logger.info("Selection explanation aborted", {
+                reason,
+                version: task.version
+              });
+              if (isTaskCurrent("explain", task.version)) {
+                panel.setState({
+                  isLoading: false,
+                  reasoningEffort: getSettings().providerReasoningEffort,
+                  statusMessage: "Explanation request canceled."
+                });
+              }
+              return;
+            }
+
+            throw error;
+          } finally {
+            if (isTaskCurrent("explain", task.version)) {
+              activeExplainTask = undefined;
+            }
+          }
+        }
       );
       return;
     }
 
-    await execute();
+    try {
+      await execute();
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        logger.info("Selection explanation aborted", {
+          reason,
+          version: task.version
+        });
+        if (isTaskCurrent("explain", task.version)) {
+          panel.setState({
+            isLoading: false,
+            reasoningEffort: getSettings().providerReasoningEffort,
+            statusMessage: "Explanation request canceled."
+          });
+        }
+        return;
+      }
+
+      throw error;
+    } finally {
+      if (isTaskCurrent("explain", task.version)) {
+        activeExplainTask = undefined;
+      }
+    }
   }
 
   async function explainCurrentFile(): Promise<void> {
@@ -854,35 +1041,23 @@ export function activate(context: vscode.ExtensionContext): void {
         await projectContext.workspaceStore.ensureProjectDataDirectories();
         const syncResult = await syncOfficialDocsForLanguage(editor.document.languageId, logger);
         await projectContext.knowledgeStore.upsertDocuments(syncResult.importedDocuments);
-        const tokenBuildResult = await buildTokenKnowledgeForEditor(
-          editor,
-          projectContext,
-          DEFAULT_TOKEN_PREBUILD_LIMIT,
-          false,
-          logger
-        );
         const failureSuffix = syncResult.failedSources.length
           ? ` Failed: ${syncResult.failedSources.length}.`
           : "";
-        const tokenSuffix = tokenBuildResult
-          ? ` Token knowledge built: ${tokenBuildResult.built}, skipped: ${tokenBuildResult.skipped}, failed: ${tokenBuildResult.failedTerms.length}.`
-          : "";
 
         panel.setState({
-          statusMessage: `Synced ${syncResult.importedDocuments.length} official docs for ${syncResult.label}.${failureSuffix}${tokenSuffix}`,
+          statusMessage: `Synced ${syncResult.importedDocuments.length} official docs for ${syncResult.label}.${failureSuffix}`,
           lastUpdatedAt: new Date().toLocaleString()
         });
 
         logger.info("Official docs synced", {
           languageId: editor.document.languageId,
           importedDocuments: syncResult.importedDocuments.length,
-          failedSources: syncResult.failedSources.length,
-          tokenKnowledgeBuilt: tokenBuildResult?.built ?? 0,
-          tokenKnowledgeSkipped: tokenBuildResult?.skipped ?? 0
+          failedSources: syncResult.failedSources.length
         });
 
         await vscode.window.showInformationMessage(
-          `Read Code In Chinese: synced ${syncResult.importedDocuments.length} official docs for ${syncResult.label}.${failureSuffix}${tokenSuffix}`
+          `Read Code In Chinese: synced ${syncResult.importedDocuments.length} official docs for ${syncResult.label}.${failureSuffix}`
         );
       }
     );
@@ -896,12 +1071,15 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
+    const task = startTask("follow-up");
     const provider = createProvider(getSettings(), logger);
-    sessionState.chatHistory.push({
+    const previousChatHistory = [...sessionState.chatHistory];
+    const userTurn: ChatTurn = {
       role: "user",
       content: question,
       createdAt: new Date().toISOString()
-    });
+    };
+    sessionState.chatHistory = [...previousChatHistory, userTurn];
     panel.setState({
       chatHistory: sessionState.chatHistory,
       isLoading: true,
@@ -909,22 +1087,75 @@ export function activate(context: vscode.ExtensionContext): void {
       statusMessage: "Generating follow-up answer..."
     });
 
-    const followUpResponse = await runFollowUpWithFallback(
-      provider,
-      {
-        request: sessionState.request,
-        explanation: sessionState.explanation,
-        question,
-        chatHistory: sessionState.chatHistory
-      },
-      logger
-    );
+    let followUpResponse;
 
-    sessionState.chatHistory.push({
-      role: "assistant",
-      content: followUpResponse.answer,
-      createdAt: new Date().toISOString()
-    });
+    try {
+      followUpResponse = await runFollowUpWithFallback(
+        provider,
+        {
+          request: sessionState.request,
+          explanation: sessionState.explanation,
+          question,
+          chatHistory: [...previousChatHistory, userTurn]
+        },
+        logger,
+        task.controller.signal
+      );
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        logger.info("Follow-up request aborted", {
+          version: task.version
+        });
+        if (isTaskCurrent("follow-up", task.version)) {
+          sessionState.chatHistory = previousChatHistory;
+          panel.setState({
+            chatHistory: previousChatHistory,
+            isLoading: false,
+            reasoningEffort: getSettings().providerReasoningEffort,
+            statusMessage: "Follow-up request canceled."
+          });
+          activeFollowUpTask = undefined;
+        }
+        return;
+      }
+
+      logger.error("Follow-up request failed", error);
+      if (isTaskCurrent("follow-up", task.version)) {
+        sessionState.chatHistory = previousChatHistory;
+        panel.setState({
+          chatHistory: previousChatHistory,
+          isLoading: false,
+          reasoningEffort: getSettings().providerReasoningEffort,
+          statusMessage: `Follow-up failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        });
+        activeFollowUpTask = undefined;
+      }
+      await vscode.window.showWarningMessage(
+        `Read Code In Chinese: follow-up failed. ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return;
+    }
+
+    if (!isTaskCurrent("follow-up", task.version) || task.controller.signal.aborted) {
+      logger.info("Dropped stale follow-up result", {
+        version: task.version
+      });
+      return;
+    }
+
+    sessionState.chatHistory = [
+      ...previousChatHistory,
+      userTurn,
+      {
+        role: "assistant",
+        content: followUpResponse.answer,
+        createdAt: new Date().toISOString()
+      }
+    ];
     panel.setState({
       chatHistory: sessionState.chatHistory,
       isLoading: false,
@@ -932,6 +1163,10 @@ export function activate(context: vscode.ExtensionContext): void {
       lastUpdatedAt: new Date().toLocaleString(),
       statusMessage: `Source: ${followUpResponse.source} | Latency: ${followUpResponse.latencyMs} ms`
     });
+
+    if (isTaskCurrent("follow-up", task.version)) {
+      activeFollowUpTask = undefined;
+    }
   }
 
   async function handleSelectionFailure(
@@ -968,67 +1203,142 @@ export function activate(context: vscode.ExtensionContext): void {
       currentFile: projectContext?.relativeFilePath ?? editor?.document.fileName,
       currentSelectionLabel: editor ? formatSelectionLabel(editor.selection) : undefined,
       currentGranularity,
-      reasoningEffort: getSettings().providerReasoningEffort
+      reasoningEffort: getSettings().providerReasoningEffort,
+      preprocessProgress: getVisiblePreprocessProgress(sessionState.preprocessProgress, editor)
     });
   }
 
-  async function buildTokenKnowledgeForActiveLanguage(options: {
-    limit: number;
-    showNotifications: boolean;
-  }): Promise<void> {
+  async function runPreprocessForActiveEditor(showNotifications: boolean): Promise<void> {
     const editor = vscode.window.activeTextEditor;
 
     if (!editor) {
-      if (options.showNotifications) {
-        await vscode.window.showWarningMessage(
-          "Read Code In Chinese: open a file before building token knowledge."
-        );
-      }
       return;
     }
 
     const projectContext = getProjectContext(editor.document, logger);
 
     if (!projectContext) {
-      if (options.showNotifications) {
-        await vscode.window.showWarningMessage(
-          "Read Code In Chinese: token knowledge build requires an opened workspace folder."
-        );
-      }
       return;
     }
 
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: `Read Code In Chinese: building ${editor.document.languageId} token knowledge`,
-        cancellable: false
-      },
-      async (progress) => {
-        const result = await buildTokenKnowledgeForEditor(
-          editor,
-          projectContext,
-          options.limit,
-          options.showNotifications,
-          logger,
-          (current, total, term) => {
-            progress.report({
-              increment: total > 0 ? 100 / total : 100,
-              message: `[${current}/${total}] ${term}`
-            });
+    if (getSettings().providerId !== "openai-compatible") {
+      return;
+    }
+
+    const provider = createProvider(getSettings(), logger);
+
+    if (!provider.preprocessSymbols) {
+      return;
+    }
+
+    const task = startTask("preprocess");
+    const sourceText = editor.document.getText();
+
+    try {
+      await projectContext.workspaceStore.ensureProjectDataDirectories();
+      const glossaryEntries = await getOrCreateGlossary(
+        projectContext.workspaceStore,
+        editor.document,
+        projectContext.relativeFilePath,
+        false,
+        logger
+      );
+      const previewCandidates = buildPreprocessCandidates(
+        glossaryEntries,
+        getSettings().professionalLevel,
+        getSettings().occupation
+      );
+
+      sessionState.preprocessProgress = {
+        status: "running",
+        totalCandidates: previewCandidates.length,
+        processedCandidates: 0,
+        totalSteps: 3,
+        completedSteps: 0,
+        batchCount: previewCandidates.length > 0 ? 1 : 0,
+        relativeFilePath: projectContext.relativeFilePath,
+        currentStep: "Preparing symbol batch",
+        message: `Found ${previewCandidates.length} symbols to preprocess.`,
+        startedAt: new Date().toISOString()
+      };
+      panel.setState({
+        preprocessProgress: sessionState.preprocessProgress
+      });
+
+      const result = await buildSymbolPreprocessCache({
+        editorText: sourceText,
+        languageId: editor.document.languageId,
+        filePath: editor.document.uri.fsPath,
+        relativeFilePath: projectContext.relativeFilePath,
+        settings: getSettings(),
+        glossaryEntries,
+        workspaceStore: projectContext.workspaceStore,
+        provider,
+        logger,
+        signal: task.controller.signal,
+        onProgress: (progress) => {
+          if (!isTaskCurrent("preprocess", task.version) || task.controller.signal.aborted) {
+            return;
           }
-        );
 
-        if (!result) {
-          return;
+          sessionState.preprocessProgress = progress;
+          panel.setState({
+            preprocessProgress: progress
+          });
         }
+      });
 
-        panel.setState({
-          statusMessage: `Token knowledge ready for ${result.languageId}: built ${result.built}, skipped ${result.skipped}, failed ${result.failedTerms.length}.`,
-          lastUpdatedAt: new Date().toLocaleString()
+      if (!isTaskCurrent("preprocess", task.version) || task.controller.signal.aborted) {
+        logger.info("Dropped stale preprocess result", {
+          version: task.version,
+          relativeFilePath: projectContext.relativeFilePath
         });
+        return;
       }
-    );
+
+      if (result && showNotifications) {
+        await vscode.window.showInformationMessage(
+          `Read Code In Chinese: preprocessed ${result.cacheFile.entries.length} symbols for ${projectContext.relativeFilePath}.`
+        );
+      }
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        logger.info("Preprocess request aborted", {
+          version: task.version,
+          relativeFilePath: projectContext.relativeFilePath
+        });
+        return;
+      }
+
+      logger.error("Preprocess request failed", error);
+      sessionState.preprocessProgress = {
+        ...(sessionState.preprocessProgress ?? {
+          totalCandidates: 0,
+          processedCandidates: 0,
+          totalSteps: 3,
+          completedSteps: 0,
+          batchCount: 0,
+          startedAt: new Date().toISOString()
+        }),
+        relativeFilePath: projectContext.relativeFilePath,
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error),
+        completedAt: new Date().toISOString()
+      };
+      panel.setState({
+        preprocessProgress: sessionState.preprocessProgress
+      });
+
+      if (showNotifications) {
+        await vscode.window.showWarningMessage(
+          `Read Code In Chinese: preprocessing failed. ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    } finally {
+      if (isTaskCurrent("preprocess", task.version)) {
+        activePreprocessTask = undefined;
+      }
+    }
   }
 }
 
@@ -1037,11 +1347,16 @@ export function deactivate(): void {}
 async function runExplanationWithFallback(
   provider: ExplanationProvider,
   request: ExplanationRequest,
-  logger: ExtensionLogger
+  logger: ExtensionLogger,
+  signal?: AbortSignal
 ): Promise<ExplanationResponse> {
   try {
-    return await provider.explain(request);
+    return await provider.explain(request, { signal });
   } catch (error) {
+    if (isAbortLikeError(error)) {
+      throw error;
+    }
+
     logger.error("Primary explanation provider failed, using local fallback", error);
     const fallbackProvider = createProvider(
       {
@@ -1052,7 +1367,7 @@ async function runExplanationWithFallback(
       },
       logger
     );
-    const response = await fallbackProvider.explain(request);
+    const response = await fallbackProvider.explain(request, { signal });
 
     return {
       ...response,
@@ -1066,11 +1381,16 @@ async function runExplanationWithFallback(
 async function runFollowUpWithFallback(
   provider: ExplanationProvider,
   request: Parameters<ExplanationProvider["answerFollowUp"]>[0],
-  logger: ExtensionLogger
+  logger: ExtensionLogger,
+  signal?: AbortSignal
 ) {
   try {
-    return await provider.answerFollowUp(request);
+    return await provider.answerFollowUp(request, { signal });
   } catch (error) {
+    if (isAbortLikeError(error)) {
+      throw error;
+    }
+
     logger.error("Primary follow-up provider failed, using local fallback", error);
     const fallbackProvider = createProvider(
       {
@@ -1082,7 +1402,7 @@ async function runFollowUpWithFallback(
       logger
     );
 
-    return fallbackProvider.answerFollowUp(request);
+    return fallbackProvider.answerFollowUp(request, { signal });
   }
 }
 
@@ -1153,14 +1473,22 @@ async function createExplanationRequest(
         : 4;
   const contextBeforeStart = Math.max(0, selection.start.line - contextPadding);
   const contextAfterEnd = Math.min(editor.document.lineCount - 1, selection.end.line + contextPadding);
+  const startLineText = editor.document.lineAt(selection.start.line).text;
+  const endLineText = editor.document.lineAt(selection.end.line).text;
+  const selectionPreview =
+    selection.start.line === selection.end.line
+      ? `${startLineText.slice(0, selection.start.character)}[[${selectedText}]]${startLineText.slice(selection.end.character)}`
+      : `${startLineText.slice(0, selection.start.character)}[[${selectedText}]]${endLineText.slice(selection.end.character)}`;
   const contextBefore = editor.document
-    .getText(new vscode.Range(contextBeforeStart, 0, selection.start.line, 0))
+    .getText(
+      new vscode.Range(contextBeforeStart, 0, selection.start.line, selection.start.character)
+    )
     .trim();
   const contextAfter = editor.document
     .getText(
       new vscode.Range(
         selection.end.line,
-        editor.document.lineAt(selection.end.line).text.length,
+        selection.end.character,
         contextAfterEnd,
         editor.document.lineAt(contextAfterEnd).text.length
       )
@@ -1187,12 +1515,20 @@ async function createExplanationRequest(
     filePath: editor.document.uri.fsPath,
     relativeFilePath,
     selectedText,
+    selectionPreview,
     granularity,
     detailLevel: settings.detailLevel,
     professionalLevel: settings.professionalLevel,
     sections: settings.sections,
     userGoal: settings.userGoal,
-    customInstructions: settings.customInstructions,
+    customInstructions:
+      settings.customInstructions ||
+      generateGlobalPrompt({
+        occupation: settings.occupation,
+        professionalLevel: settings.professionalLevel,
+        detailLevel: settings.detailLevel,
+        userGoal: settings.userGoal
+      }),
     contextBefore,
     contextAfter,
     glossaryEntries,
@@ -1368,6 +1704,7 @@ function summarizeSettings(settings: ReturnType<typeof getSettings>) {
     providerReasoningEffort: settings.providerReasoningEffort,
     detailLevel: settings.detailLevel,
     professionalLevel: settings.professionalLevel,
+    occupation: settings.occupation,
     sections: settings.sections,
     autoExplainEnabled: settings.autoExplainEnabled,
     autoOpenPanel: settings.autoOpenPanel
@@ -1393,13 +1730,28 @@ function inferCurrentGranularity(
   );
 }
 
-async function updateConfigurationValue(
-  key: string,
-  value: unknown,
-  target: vscode.ConfigurationTarget
-): Promise<void> {
+function getRelativeFilePath(editor: vscode.TextEditor | undefined): string | undefined {
+  return editor ? getProjectContext(editor.document)?.relativeFilePath : undefined;
+}
+
+function getVisiblePreprocessProgress(
+  progress: PreprocessProgress | undefined,
+  editor: vscode.TextEditor | undefined
+): PreprocessProgress | undefined {
+  if (!progress || !editor) {
+    return undefined;
+  }
+
+  return progress.relativeFilePath === getRelativeFilePath(editor) ? progress : undefined;
+}
+
+async function persistConfigurationValue(key: string, value: unknown): Promise<void> {
   const configuration = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-  await configuration.update(key, value, target);
+  await configuration.update(key, value, vscode.ConfigurationTarget.Global);
+
+  if (vscode.workspace.workspaceFolders?.length) {
+    await configuration.update(key, value, vscode.ConfigurationTarget.Workspace);
+  }
 }
 
 async function saveSettingsFromPanel(payload: {
@@ -1412,6 +1764,7 @@ async function saveSettingsFromPanel(payload: {
   userGoal: string;
   detailLevel: ReturnType<typeof getSettings>["detailLevel"];
   professionalLevel: ReturnType<typeof getSettings>["professionalLevel"];
+  occupation: ReturnType<typeof getSettings>["occupation"];
   sections: string[];
   temperature: number;
   topP: number;
@@ -1419,88 +1772,79 @@ async function saveSettingsFromPanel(payload: {
   reasoningEffort: ReturnType<typeof getSettings>["providerReasoningEffort"];
   autoExplainEnabled: boolean;
 }): Promise<void> {
-  const target = vscode.ConfigurationTarget.Global;
-  const configuration = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+  const currentSettings = getSettings();
+  const sanitizedProviderTimeoutMs = sanitizeNumber(
+    payload.providerTimeoutMs,
+    currentSettings.providerTimeoutMs,
+    { minimum: 1000 }
+  );
+  const sanitizedTemperature = sanitizeNumber(payload.temperature, currentSettings.providerTemperature, {
+    minimum: 0,
+    maximum: 2
+  });
+  const sanitizedTopP = sanitizeNumber(payload.topP, currentSettings.providerTopP, {
+    minimum: 0,
+    maximum: 1
+  });
+  const sanitizedMaxTokens = Math.round(
+    sanitizeNumber(payload.maxTokens, currentSettings.providerMaxTokens, {
+      minimum: 64
+    })
+  );
+  const updates: Array<[string, unknown]> = [
+    ["provider.id", payload.providerId],
+    ["provider.baseUrl", payload.providerBaseUrl],
+    ["provider.model", payload.providerModel],
+    ["provider.apiKeyEnvVar", payload.providerApiKeyEnvVar],
+    ["provider.timeoutMs", sanitizedProviderTimeoutMs],
+    ["prompt.customInstructions", payload.customInstructions.trim()],
+    ["explanation.userGoal", payload.userGoal],
+    ["explanation.detailLevel", payload.detailLevel],
+    ["explanation.professionalLevel", payload.professionalLevel],
+    ["explanation.occupation", payload.occupation],
+    ["explanation.sections", payload.sections.length ? payload.sections : ["summary"]],
+    ["provider.temperature", sanitizedTemperature],
+    ["provider.topP", sanitizedTopP],
+    ["provider.maxTokens", sanitizedMaxTokens],
+    ["provider.reasoningEffort", payload.reasoningEffort],
+    ["autoExplain.enabled", payload.autoExplainEnabled]
+  ];
 
-  await Promise.all([
-    configuration.update("provider.id", payload.providerId, target),
-    configuration.update("provider.baseUrl", payload.providerBaseUrl, target),
-    configuration.update("provider.model", payload.providerModel, target),
-    configuration.update("provider.apiKeyEnvVar", payload.providerApiKeyEnvVar, target),
-    configuration.update("provider.timeoutMs", payload.providerTimeoutMs, target),
-    configuration.update("prompt.customInstructions", payload.customInstructions, target),
-    configuration.update("explanation.userGoal", payload.userGoal, target),
-    configuration.update("explanation.detailLevel", payload.detailLevel, target),
-    configuration.update("explanation.professionalLevel", payload.professionalLevel, target),
-    configuration.update("explanation.sections", payload.sections, target),
-    configuration.update("provider.temperature", payload.temperature, target),
-    configuration.update("provider.topP", payload.topP, target),
-    configuration.update("provider.maxTokens", payload.maxTokens, target),
-    configuration.update("provider.reasoningEffort", payload.reasoningEffort, target),
-    configuration.update("autoExplain.enabled", payload.autoExplainEnabled, target)
-  ]);
+  for (const [key, value] of updates) {
+    await persistConfigurationValue(key, value);
+  }
+
+  const savedSettings = getSettings();
 
   await vscode.window.showInformationMessage(
-    "Read Code In Chinese: settings saved."
+    `Read Code In Chinese: settings saved. Provider=${savedSettings.providerId}, occupation=${savedSettings.occupation}.`
   );
 }
 
-async function buildTokenKnowledgeForEditor(
-  editor: vscode.TextEditor,
-  projectContext: {
-    workspaceRoot: string;
-    relativeFilePath: string;
-    workspaceStore: WorkspaceStore;
-    knowledgeStore: KnowledgeStore;
-  },
-  limit: number,
-  showNotifications: boolean,
-  logger?: ExtensionLogger,
-  onProgress?: (current: number, total: number, term: string) => void
-) {
-  await projectContext.workspaceStore.ensureProjectDataDirectories();
-  const settings = getSettings();
-  const provider = createProvider(settings, logger);
+function sanitizeNumber(
+  value: number,
+  fallback: number,
+  options?: { minimum?: number; maximum?: number }
+): number {
+  const safeValue = Number.isFinite(value) ? value : fallback;
+  const minimum = options?.minimum ?? -Infinity;
+  const maximum = options?.maximum ?? Infinity;
 
-  if (provider.id !== "openai-compatible") {
-    if (showNotifications) {
-      await vscode.window.showWarningMessage(
-        "Read Code In Chinese: token knowledge prebuild requires the OpenAI-compatible provider."
-      );
-    }
-    return undefined;
+  return Math.min(maximum, Math.max(minimum, safeValue));
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  if (!error) {
+    return false;
   }
 
-  const glossaryEntries = await getOrCreateGlossary(
-    projectContext.workspaceStore,
-    editor.document,
-    projectContext.relativeFilePath,
-    false,
-    logger
-  );
-  const tokenKnowledgeStore = new TokenKnowledgeStore(projectContext.workspaceStore, logger);
-  const result = await buildTokenKnowledgeBatch({
-    languageId: editor.document.languageId,
-    filePath: editor.document.uri.fsPath,
-    relativeFilePath: projectContext.relativeFilePath,
-    settings,
-    glossaryEntries,
-    knowledgeStore: projectContext.knowledgeStore,
-    tokenKnowledgeStore,
-    provider,
-    preferredTerms: glossaryEntries.map((entry) => entry.term),
-    logger,
-    limit,
-    onProgress: onProgress
-      ? (payload) => onProgress(payload.current, payload.total, payload.term)
-      : undefined
-  });
-
-  if (showNotifications) {
-    await vscode.window.showInformationMessage(
-      `Read Code In Chinese: built ${result.built}, skipped ${result.skipped}, failed ${result.failedTerms.length} token entries for ${result.languageId}.`
-    );
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
   }
 
-  return result;
+  if (error instanceof Error) {
+    return error.name === "AbortError" || /aborted/i.test(error.message);
+  }
+
+  return false;
 }

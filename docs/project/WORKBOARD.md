@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 11
-- Latest summary: `docs/project/summaries/2026-04-14-stage-11.md`
+- Latest completed milestone: Stage 12
+- Latest summary: `docs/project/summaries/2026-04-14-stage-12.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -36,6 +36,7 @@ Every future work session must read these files in order before making changes:
 | 9 | Provider reliability fix | Completed | Env-based provider resolution, clearer diagnostics, and local fallback repair |
 | 10 | Token workflow and settings UX | Completed | Token cache, onboarding settings, loading UI, granularity UI, and reasoning selector |
 | 11 | Token knowledge prebuild | Completed | Knowledge-grounded token prebuild, expanded settings, and real API validation |
+| 12 | File preprocess and cancellation | Completed | File-scoped symbol preprocessing, stale-request cancellation, grounded token prompts, and settings persistence hardening |
 
 ## Completed Tasks
 
@@ -97,6 +98,11 @@ Every future work session must read these files in order before making changes:
 - [x] S11-04 Expand settings UI to cover provider controls in addition to prompt and hyperparameters.
 - [x] S11-05 Add tests and real smoke validation for the token prebuild workflow.
 - [x] S11-06 Produce the Stage 11 summary file.
+- [x] S12-01 Replace broad token prebuild behavior with file-scoped symbol preprocessing for user-defined terms.
+- [x] S12-02 Abort stale explain and follow-up tasks so the newest selection or editor state wins.
+- [x] S12-03 Ground token prompts in selection-line previews and strengthen remote content parsing.
+- [x] S12-04 Harden settings persistence, generated-prompt workflow, and preprocess progress scoping.
+- [x] S12-05 Produce the Stage 12 summary file.
 
 ## Current Todo
 
@@ -116,6 +122,7 @@ Every future work session must read these files in order before making changes:
 - A Stage 9 fix closed the gap where VS Code schema defaults could hide env-based provider settings during development-host testing.
 - A Stage 10 update added a dedicated token explanation workflow and user-facing settings UI so token explanations are less template-like and more controllable.
 - A Stage 11 update turned token knowledge into a real prebuild workflow backed by synced docs plus remote reasoning, instead of only caching after first use.
+- A Stage 12 update replaced the broad token prebuild behavior with file-scoped symbol preprocessing, added stale-task cancellation, and improved single-token prompt grounding with exact callsite previews.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

@@ -2,7 +2,7 @@
   "name": "read-code-in-chinese",
   "displayName": "Read Code In Chinese",
   "description": "VS Code extension for turning source code into concise Chinese explanations.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "ycf7606",
   "license": "MPL-2.0",
   "repository": {
@@ -84,7 +84,7 @@
       },
       {
         "command": "readCodeInChinese.buildTokenKnowledgeForActiveLanguage",
-        "title": "Read Code In Chinese: Build Token Knowledge For Active Language"
+        "title": "Read Code In Chinese: Preprocess Current File Symbols"
       }
     ],
     "keybindings": [
@@ -221,6 +221,18 @@
           "default": "intermediate",
           "description": "Controls how much domain-specific terminology should be used."
         },
+        "readCodeInChinese.explanation.occupation": {
+          "type": "string",
+          "enum": [
+            "student",
+            "developer",
+            "data-scientist",
+            "researcher",
+            "maintainer"
+          ],
+          "default": "developer",
+          "description": "Audience occupation profile used for prompt generation and preprocessing scope."
+        },
         "readCodeInChinese.explanation.sections": {
           "type": "array",
           "items": {
@@ -247,7 +259,7 @@
         "readCodeInChinese.prompt.customInstructions": {
           "type": "string",
           "default": "",
-          "description": "Extra instructions appended to both explanation and follow-up prompts."
+          "description": "Editable global prompt instructions appended to explanation and follow-up prompts."
         },
         "readCodeInChinese.knowledge.topK": {
           "type": "number",

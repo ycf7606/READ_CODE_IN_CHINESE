@@ -3,6 +3,7 @@ import {
   DetailLevel,
   ExplanationSectionName,
   ExtensionSettings,
+  Occupation,
   ProviderId,
   ProfessionalLevel,
   ReasoningEffort
@@ -99,6 +100,12 @@ export function getSettings(): ExtensionSettings {
       (readStringEnv(
         "READ_CODE_IN_CHINESE_EXPLANATION_PROFESSIONAL_LEVEL"
       ) as ProfessionalLevel) ?? "intermediate"
+    ),
+    occupation: getConfiguredValue<Occupation>(
+      configuration,
+      "explanation.occupation",
+      (readStringEnv("READ_CODE_IN_CHINESE_EXPLANATION_OCCUPATION") as Occupation) ??
+        "developer"
     ),
     sections: getConfiguredValue<ExplanationSectionName[]>(
       configuration,
