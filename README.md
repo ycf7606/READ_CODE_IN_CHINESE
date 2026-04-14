@@ -28,7 +28,7 @@
 ## Current Status
 
 - Stage 0-7 completed
-- Stage 12 file-symbol preprocessing and request-cancellation flow is complete through real API validation
+- Stage 13 dictionary-style UX, visible file wordbook, and provider-backed prompt generation are complete through real API validation
 - Tracking board: `docs/project/WORKBOARD.md`
 
 ## Main Commands
@@ -63,6 +63,7 @@
   - inline reasoning-effort selector for follow-up chat
   - settings button that opens the configuration panel
   - preprocess progress, symbol counts, and cache-aware status messages
+  - visible file wordbook for the current file preprocess cache
   - suggested follow-up questions
   - glossary snapshot
   - workspace index preview
@@ -146,6 +147,11 @@ The settings panel can now edit:
 - reasoning effort
 - auto explain
 
+It can also:
+
+- generate the global prompt through the configured provider using the current audience and hyperparameter profile
+- show prompt-generation status inline before the user saves the final editable prompt
+
 ## Knowledge Import
 
 The extension can import local `.md`, `.txt`, and `.json` files as retrieval documents.
@@ -176,6 +182,7 @@ When the remote provider is enabled, the extension can preprocess the active fil
 - Command: `Read Code In Chinese: Preprocess Current File Symbols`
 - Candidate scope adapts to `professionalLevel` and `occupation`
 - The explanation panel shows total symbol count, batch count, and progress
+- The explanation panel also shows a visible file wordbook sourced from the current file preprocess cache
 - Single-symbol explanations first check this file-level preprocess cache before hitting the model again
 - If the user changes selection while a request is still running, the older request is aborted and the newest selection wins
 

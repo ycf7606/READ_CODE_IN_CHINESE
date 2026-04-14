@@ -3,10 +3,13 @@ import {
   ExplanationResponse,
   FollowUpRequest,
   FollowUpResponse,
+  PromptProfileRequest,
+  PromptProfileResponse,
   SymbolPreprocessRequest,
   SymbolPreprocessResponse
 } from "../contracts";
 import { ExtensionLogger } from "../logging/logger";
+import { generateGlobalPrompt } from "../prompts/globalPromptProfile";
 import {
   buildLocalSummary,
   buildSectionContent,
@@ -22,10 +25,15 @@ export class LocalExplanationProvider implements ExplanationProvider {
   async explain(request: ExplanationRequest): Promise<ExplanationResponse> {
     const startedAt = Date.now();
     const summary = buildLocalSummary(request);
-    const sections = request.sections.map((sectionName) => ({
-      label: sectionName,
-      content: buildSectionContent(request, sectionName)
-    }));
+    const sections = request.sections.map((sectionName) => {
+      const content = buildSectionContent(request, sectionName);
+
+      return {
+        label: sectionName,
+        content,
+        items: toBulletItems(content)
+      };
+    });
 
     this.logger?.info("Local provider generated explanation", {
       requestId: request.requestId,
@@ -52,6 +60,17 @@ export class LocalExplanationProvider implements ExplanationProvider {
     };
   }
 
+  async generatePromptProfile(request: PromptProfileRequest): Promise<PromptProfileResponse> {
+    const startedAt = Date.now();
+
+    return {
+      prompt: generateGlobalPrompt(request),
+      source: this.id,
+      latencyMs: Date.now() - startedAt,
+      note: "Used the local fallback prompt generator because no remote model provider is configured."
+    };
+  }
+
   async answerFollowUp(request: FollowUpRequest): Promise<FollowUpResponse> {
     const startedAt = Date.now();
     const relatedSection = request.explanation.sections.find((section) =>
@@ -62,20 +81,22 @@ export class LocalExplanationProvider implements ExplanationProvider {
       .map((entry) => `${entry.term}: ${entry.meaning}`)
       .join("；");
     const answerParts = [
-      `围绕这段代码，当前能确定的核心点是：${request.explanation.summary}`
+      `1. 当前最稳妥的结论是：${request.explanation.summary}`
     ];
 
     if (relatedSection) {
-      answerParts.push(`如果继续看 ${relatedSection.label}，重点是：${relatedSection.content}`);
+      answerParts.push(
+        `2. 如果继续看 ${relatedSection.label}，重点是：${
+          relatedSection.items?.[0] ?? relatedSection.content
+        }`
+      );
     }
 
     if (glossaryHints) {
-      answerParts.push(`相关术语可以先这样理解：${glossaryHints}`);
+      answerParts.push(`3. 相关术语可以先这样理解：${glossaryHints}`);
     }
 
-    answerParts.push(
-      "当前回答来自本地兜底分析，不是远端模型推理；如果要更细的语义解释，需要先让远端 provider 生效。"
-    );
+    answerParts.push("4. 当前回答来自本地兜底分析，不是远端模型推理。");
 
     this.logger?.info("Local provider answered follow-up", {
       questionLength: request.question.length,
@@ -83,10 +104,10 @@ export class LocalExplanationProvider implements ExplanationProvider {
     });
 
     return {
-      answer: answerParts.join(" "),
+      answer: answerParts.join("\n"),
       suggestedQuestions: [
-        "这段代码依赖了哪些上游变量或函数？",
-        "如果我要改这里，最容易出错的点是什么？"
+        "这一段依赖了哪些上游变量或函数？",
+        "如果我要修改这里，最容易出错的点是什么？"
       ],
       source: this.id,
       latencyMs: Date.now() - startedAt
@@ -106,12 +127,38 @@ export class LocalExplanationProvider implements ExplanationProvider {
         normalizedTerm: candidate.normalizedTerm,
         category: candidate.category,
         sourceLine: candidate.sourceLine,
-        summary: `\`${candidate.term}\` 是当前文件里的一个${candidate.category === "function" ? "函数" : "符号"}，需要结合附近逻辑理解它的具体职责。`,
+        summary: `\`${candidate.term}\` 是当前文件中的${localCategoryLabel(
+          candidate.category
+        )}，具体职责要结合附近赋值和调用位置判断。`,
         generatedAt: new Date().toISOString()
       })),
       source: this.id,
       latencyMs: Date.now() - startedAt
     };
+  }
+}
+
+function toBulletItems(content: string): string[] {
+  return Array.from(
+    new Set(
+      content
+        .split(/\n+|(?<=[。！？；;])\s*/u)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    )
+  ).slice(0, 4);
+}
+
+function localCategoryLabel(category: SymbolPreprocessRequest["candidates"][number]["category"]): string {
+  switch (category) {
+    case "function":
+      return "函数";
+    case "class":
+      return "类";
+    case "type":
+      return "类型";
+    default:
+      return "变量";
   }
 }
 

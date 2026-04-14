@@ -54,15 +54,15 @@ export function detectPrimaryAction(selectedText: string): string {
   const trimmedText = normalizeWhitespace(selectedText);
 
   if (/^\s*return\b/.test(trimmedText)) {
-    return "返回一个值";
+    return "返回一个结果";
   }
 
   if (/^\s*(if|else if|switch)\b/.test(trimmedText)) {
-    return "控制条件分支";
+    return "根据条件选择分支";
   }
 
   if (/^\s*(for|while)\b/.test(trimmedText)) {
-    return "遍历一个序列或条件";
+    return "遍历数据或重复执行";
   }
 
   if (/=\s*>/.test(trimmedText) || /\bfunction\b/.test(trimmedText)) {
@@ -74,7 +74,7 @@ export function detectPrimaryAction(selectedText: string): string {
   }
 
   if (/\(/.test(trimmedText) && /\)/.test(trimmedText)) {
-    return "调用一个操作";
+    return "调用一个函数或方法";
   }
 
   return "执行一个明确的代码动作";
@@ -117,23 +117,23 @@ export function buildLocalSummary(request: ExplanationRequest): string {
 
       return matchingGlossaryEntry
         ? `\`${term}\` 在当前文件里通常表示：${matchingGlossaryEntry.meaning}`
-        : `\`${term}\` 是一个独立符号，需要结合周围上下文理解。`;
+        : `\`${term}\` 是一个独立符号，需要结合当前语句和周围上下文判断它的具体含义。`;
     }
     case "function": {
       const functionName = extractFunctionName(selectedText);
       const parameters = extractFunctionParameters(selectedText);
       const parameterSummary = parameters.length
-        ? ` 它看起来接收这些参数：${parameters.join(", ")}。`
+        ? ` 输入参数主要有：${parameters.join(", ")}。`
         : "";
 
-      return `这段函数形态的代码主要负责 ${humanizeIdentifier(functionName)}。${parameterSummary}`;
+      return `这段函数形态的代码主要负责 ${humanizeIdentifier(functionName)}。${parameterSummary}`.trim();
     }
     case "block":
-      return `这段代码块把几个相关步骤组织在一起，核心作用是${detectPrimaryAction(selectedText)}。`;
+      return `这段代码块把几步相关逻辑组织在一起，核心作用是${detectPrimaryAction(selectedText)}。`;
     case "file":
       return buildFileOverviewSummary(selectedText, request.relativeFilePath);
     case "workspace":
-      return "这个工作区索引概括了仓库中各个源码文件的角色。";
+      return "这个工作区索引概括了仓库中各个文件的职责和位置。";
     default:
       return `这条语句主要是在${detectPrimaryAction(selectedText)}。`;
   }
@@ -151,25 +151,25 @@ export function buildSectionContent(
         const parameters = extractFunctionParameters(selectedText);
         const hasReturn = /\breturn\b/.test(selectedText);
 
-        return `输入：${parameters.length ? parameters.join(", ") : "未显式声明"}。输出：${
-          hasReturn ? "会返回一个计算结果或对象。" : "没有检测到显式返回值。"
+        return `输入：${parameters.length ? parameters.join(", ") : "没有显式参数"}。输出：${
+          hasReturn ? "会返回一个计算结果、对象或中间值。" : "当前片段里没有看到显式返回值。"
         }`;
       }
 
       if (request.granularity === "token") {
-        return "当前选区是一个符号，它的输入输出要看所在语句和调用位置。";
+        return "当前选区是一个符号，它的输入输出要结合所在语句和调用位置理解。";
       }
 
-      return "输入通常来自附近变量和状态，输出则是这段代码产生的状态变化或结果值。";
+      return "输入通常来自附近变量、参数或状态，输出则是这段代码产生的新值、返回值或状态变化。";
     }
     case "usage":
       return `当你需要这段代码去${detectPrimaryAction(selectedText)}时，就会用到这里。`;
     case "syntax":
-      return `这段代码在 ${request.languageId} 里更像一个 ${request.granularity} 级结构，所以要优先按这种结构的语法规则理解。`;
+      return `这段代码在 ${request.languageId} 里更像一个 ${request.granularity} 级结构，理解时优先按这种结构的语法规则来看。`;
     case "risk":
       return /\b(fetch|write|update|delete|push|set|mutate)\b/i.test(selectedText)
-        ? "这段代码可能触发副作用，重点确认状态变化和外部调用。"
-        : "主要风险在于误解周围状态、命名含义或隐含前提。";
+        ? "这里可能带来副作用，重点确认状态变化、外部调用和数据写回。"
+        : "这里更容易被误解的点通常是命名含义、隐藏前提和附近状态。";
     default:
       return buildLocalSummary(request);
   }
@@ -227,7 +227,7 @@ export function buildFileOverviewSummary(
 ): string {
   const symbols = extractSymbols(sourceCode);
   const tags = extractTags(relativeFilePath, sourceCode);
-  const symbolSummary = symbols.length ? `关键符号：${symbols.join(", ")}。` : "";
+  const symbolSummary = symbols.length ? ` 关键符号有：${symbols.join(", ")}。` : "";
 
   return `文件 \`${relativeFilePath}\` 主要承担 ${tags.join(", ")} 模块的角色。${symbolSummary}`.trim();
 }
@@ -261,38 +261,29 @@ export function createWorkspaceIndexMarkdown(index: WorkspaceIndex): string {
 }
 
 export function isSupportedWorkspaceFile(relativePath: string): boolean {
-  if (
-    relativePath.startsWith(".git/") ||
-    relativePath.startsWith("node_modules/") ||
-    relativePath.startsWith("dist/") ||
-    relativePath.startsWith(".read-code-in-chinese/")
-  ) {
-    return false;
-  }
-
-  const extension = relativePath.slice(relativePath.lastIndexOf("."));
-  return SUPPORTED_SOURCE_EXTENSIONS.has(extension.toLowerCase());
+  return SUPPORTED_SOURCE_EXTENSIONS.has(pathExtension(relativePath));
 }
 
 export function createSuggestedQuestions(
   request: ExplanationRequest,
   glossaryEntries: GlossaryEntry[]
 ): string[] {
-  const questions = new Set<string>();
-
-  if (request.granularity !== "file") {
-    questions.add("这一段在整个文件里起什么作用？");
-  }
-
-  if (request.granularity !== "function") {
-    questions.add("这里最关键的输入输出是什么？");
-  }
-
-  const topGlossaryEntry = glossaryEntries[0];
+  const suggestions = [
+    "这一段在整个文件里起什么作用？",
+    "这里最关键的输入输出是什么？"
+  ];
+  const topGlossaryEntry = glossaryEntries.find(
+    (entry) => entry.normalizedTerm !== request.selectedText.trim().toLowerCase()
+  );
 
   if (topGlossaryEntry) {
-    questions.add(`变量 ${topGlossaryEntry.term} 在这里具体代表什么？`);
+    suggestions.push(`变量 ${topGlossaryEntry.term} 在这里具体代表什么？`);
   }
 
-  return Array.from(questions).slice(0, 3);
+  return suggestions.slice(0, 3);
+}
+
+function pathExtension(relativePath: string): string {
+  const match = relativePath.toLowerCase().match(/\.[^./\\]+$/);
+  return match?.[0] ?? "";
 }

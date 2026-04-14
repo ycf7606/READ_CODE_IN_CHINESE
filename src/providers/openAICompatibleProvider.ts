@@ -1,16 +1,20 @@
-import {
+﻿import {
   ChatTurn,
   ExplanationRequest,
   ExplanationResponse,
+  ExplanationSection,
   ExtensionSettings,
   FollowUpRequest,
   FollowUpResponse,
   GlossaryEntry,
+  PromptProfileRequest,
+  PromptProfileResponse,
   PreprocessedSymbolEntry,
   SymbolPreprocessRequest,
   SymbolPreprocessResponse
 } from "../contracts";
 import { ExtensionLogger } from "../logging/logger";
+import { buildPromptProfileGenerationPrompts } from "../prompts/globalPromptProfile";
 import {
   buildExplainPrompts,
   buildFollowUpPrompts,
@@ -94,6 +98,28 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
     };
   }
 
+  async generatePromptProfile(
+    request: PromptProfileRequest,
+    options?: ProviderCallOptions
+  ): Promise<PromptProfileResponse> {
+    const startedAt = Date.now();
+    const prompts = buildPromptProfileGenerationPrompts(request);
+    const content = await this.createChatCompletion(
+      [
+        { role: "system", content: prompts.system },
+        { role: "user", content: prompts.user }
+      ],
+      "prompt-profile",
+      options?.signal
+    );
+
+    return {
+      prompt: content.trim(),
+      source: this.id,
+      latencyMs: Date.now() - startedAt
+    };
+  }
+
   async answerFollowUp(
     request: FollowUpRequest,
     options?: ProviderCallOptions
@@ -124,7 +150,7 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
     return {
       answer: content.trim(),
       suggestedQuestions: [
-        "它和上游调用链的关系是什么？",
+        "它和上游调用链之间是什么关系？",
         "这里有没有隐藏的副作用或状态变化？"
       ],
       source: this.id,
@@ -159,7 +185,7 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
 
   private async createChatCompletion(
     messages: ChatCompletionMessage[],
-    mode: "explain" | "follow-up" | "preprocess",
+    mode: "explain" | "follow-up" | "preprocess" | "prompt-profile",
     signal?: AbortSignal
   ): Promise<string> {
     const apiKey = process.env[this.settings.providerApiKeyEnvVar];
@@ -254,7 +280,7 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
 function buildPayloadCandidates(
   settings: ExtensionSettings,
   messages: ChatCompletionMessage[],
-  mode: "explain" | "follow-up" | "preprocess"
+  mode: "explain" | "follow-up" | "preprocess" | "prompt-profile"
 ): Array<Record<string, unknown>> {
   const basePayload = {
     model: settings.providerModel,
@@ -288,6 +314,22 @@ function buildPayloadCandidates(
         temperature: 0,
         max_tokens: Math.min(settings.providerMaxTokens, 1400),
         response_format: { type: "json_object" }
+      }
+    ];
+  }
+
+  if (mode === "prompt-profile") {
+    return [
+      {
+        ...basePayload,
+        temperature: Math.max(0, Math.min(settings.providerTemperature, 0.6)),
+        max_tokens: Math.min(settings.providerMaxTokens, 300),
+        reasoning_effort: settings.providerReasoningEffort
+      },
+      {
+        ...basePayload,
+        temperature: 0.2,
+        max_tokens: Math.min(settings.providerMaxTokens, 300)
       }
     ];
   }
@@ -347,36 +389,45 @@ function parseJsonResponse(content: string): Record<string, unknown> {
   }
 }
 
-function normalizeSections(value: unknown): Array<{ label: string; content: string }> {
+function normalizeSections(value: unknown): ExplanationSection[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return value
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return undefined;
-      }
+  const normalized: ExplanationSection[] = [];
 
-      const candidate = entry as { label?: unknown; content?: unknown };
-      const heading =
-        "heading" in (entry as Record<string, unknown>)
-          ? (entry as Record<string, unknown>).heading
-          : undefined;
-      const label =
-        typeof candidate.label === "string"
-          ? candidate.label.trim()
-          : typeof heading === "string"
-            ? heading.trim()
-            : "section";
-      const content = typeof candidate.content === "string" ? candidate.content.trim() : "";
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
 
-      return { label, content };
-    })
-    .filter(
-      (entry): entry is { label: string; content: string } =>
-        Boolean(entry && entry.content)
-    );
+    const candidate = entry as { label?: unknown; content?: unknown; items?: unknown };
+    const heading =
+      "heading" in (entry as Record<string, unknown>)
+        ? (entry as Record<string, unknown>).heading
+        : undefined;
+    const label =
+      typeof candidate.label === "string"
+        ? candidate.label.trim()
+        : typeof heading === "string"
+          ? heading.trim()
+          : "section";
+    const content = typeof candidate.content === "string" ? candidate.content.trim() : "";
+    const items = normalizeStringArray(candidate.items);
+    const fallbackItems = !items.length ? splitContentIntoItems(content) : items;
+
+    if (!content && !fallbackItems.length) {
+      continue;
+    }
+
+    normalized.push({
+      label,
+      content,
+      items: fallbackItems.length ? fallbackItems : undefined
+    });
+  }
+
+  return normalized;
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -562,3 +613,15 @@ async function safeReadText(response: Response): Promise<string> {
 function shortenWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 240);
 }
+
+function splitContentIntoItems(content: string): string[] {
+  return Array.from(
+    new Set(
+      content
+        .split(/\n+|(?<=[。！？；;])\s*/u)
+        .map((entry) => entry.replace(/^[-*•\s]+/, "").trim())
+        .filter((entry) => entry.length > 0)
+    )
+  ).slice(0, 4);
+}
+

@@ -33,7 +33,7 @@ The extension is designed to make source code easier to read by combining:
 ### `src/providers/`
 
 - `localProvider.ts`: zero-dependency local explanation engine
-- `openAICompatibleProvider.ts`: remote adapter for chat completion APIs
+- `openAICompatibleProvider.ts`: remote adapter for chat completion APIs and prompt-profile generation
 - `createProvider.ts`: selects the best provider from settings
 
 ### `src/knowledge/`
@@ -57,8 +57,8 @@ The extension is designed to make source code easier to read by combining:
 ### `src/ui/`
 
 - `glossaryTreeProvider.ts`: Explorer sidebar glossary
-- `explanationPanel.ts`: explanation, selection metadata, glossary snapshot, workspace preview, and follow-up chat
-- `settingsPanel.ts`: first-run onboarding, provider controls, preprocess trigger, occupation presets, prompt generation, and editable prompt / hyperparameter controls
+- `explanationPanel.ts`: explanation, selection metadata, preprocess progress, visible file wordbook, glossary snapshot, workspace preview, and follow-up chat
+- `settingsPanel.ts`: first-run onboarding, provider controls, preprocess trigger, occupation presets, provider-backed prompt generation, and editable prompt / hyperparameter controls
 
 ## Data Flow
 
@@ -71,13 +71,14 @@ The extension is designed to make source code easier to read by combining:
 7. If the selection is a token, the extension first checks the active file's preprocess cache
 8. On preprocess-cache miss, it checks the older token knowledge cache
 9. Explanation request is built with user goal, custom prompt instructions, selection-line preview, and provider hyperparameters
-10. Local or remote provider returns a structured explanation grounded in the exact callsite context
-11. In the background, the extension can preprocess user-defined file symbols in one full-file batch
-12. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins
-13. Successful remote token explanations can still be written into the token knowledge cache
-14. Panel, glossary UI, preprocess progress, and status metadata update
-15. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
-16. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
+10. Settings-panel prompt generation can call the configured provider to synthesize a reusable global prompt from the current user profile
+11. Local or remote provider returns a structured explanation grounded in the exact callsite context
+12. In the background, the extension can preprocess user-defined file symbols in one full-file batch
+13. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins
+14. Successful remote token explanations can still be written into the token knowledge cache
+15. Panel, glossary UI, visible wordbook, preprocess progress, and status metadata update
+16. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
+17. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 
@@ -101,6 +102,7 @@ Workspace-local cache directory:
 - workspace-local persistence
 - minimal assumptions about the user's model provider
 - user-configurable prompt instructions and remote hyperparameters
+- provider-backed global prompt generation with editable final text
 - VS Code-native, low-noise UI
 - faster repeated symbol explanations through file-scoped preprocessing and caching
 - correctness over stale work by canceling outdated tasks quickly

@@ -3,6 +3,8 @@ import {
   ExplanationResponse,
   FollowUpRequest,
   FollowUpResponse,
+  PromptProfileRequest,
+  PromptProfileResponse,
   SymbolPreprocessRequest,
   SymbolPreprocessResponse
 } from "../contracts";
@@ -25,4 +27,8 @@ export interface ExplanationProvider {
     request: SymbolPreprocessRequest,
     options?: ProviderCallOptions
   ): Promise<SymbolPreprocessResponse>;
+  generatePromptProfile?(
+    request: PromptProfileRequest,
+    options?: ProviderCallOptions
+  ): Promise<PromptProfileResponse>;
 }

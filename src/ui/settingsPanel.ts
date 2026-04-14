@@ -9,13 +9,24 @@ import {
 
 interface SettingsPayload {
   settings: ExtensionSettings;
+  statusMessage?: string;
 }
 
 type PromptGenerationPayload = {
+  providerId: ProviderId;
+  providerBaseUrl: string;
+  providerModel: string;
+  providerApiKeyEnvVar: string;
+  providerTimeoutMs: number;
   occupation: Occupation;
   userGoal: string;
   detailLevel: ExtensionSettings["detailLevel"];
   professionalLevel: ExtensionSettings["professionalLevel"];
+  sections: ExplanationSectionName[];
+  reasoningEffort: ReasoningEffort;
+  temperature: number;
+  topP: number;
+  maxTokens: number;
 };
 
 type SettingsMessage =
@@ -56,7 +67,10 @@ export class SettingsPanel implements vscode.Disposable {
   ) {}
 
   show(settings: ExtensionSettings): void {
-    this.state = { settings };
+    this.state = {
+      settings,
+      statusMessage: this.state?.statusMessage
+    };
 
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.Beside, true);
@@ -94,10 +108,23 @@ export class SettingsPanel implements vscode.Disposable {
     }
 
     this.state = {
+      ...this.state,
       settings: {
         ...this.state.settings,
         customInstructions: prompt
       }
+    };
+    this.postState();
+  }
+
+  setStatusMessage(statusMessage: string | undefined): void {
+    if (!this.state) {
+      return;
+    }
+
+    this.state = {
+      ...this.state,
+      statusMessage
     };
     this.postState();
   }
@@ -161,6 +188,11 @@ export class SettingsPanel implements vscode.Disposable {
       }
 
       .muted {
+        color: var(--vscode-descriptionForeground);
+      }
+
+      .status {
+        margin-top: 8px;
         color: var(--vscode-descriptionForeground);
       }
 
@@ -231,6 +263,7 @@ export class SettingsPanel implements vscode.Disposable {
       <section class="card">
         <h1>Read Code In Chinese Settings</h1>
         <p class="muted">Configure provider settings, audience profile, preprocessing behavior, and the editable global prompt used in runtime prompts.</p>
+        <div id="statusMessage" class="status"></div>
       </section>
 
       <section class="card">
@@ -378,6 +411,7 @@ export class SettingsPanel implements vscode.Disposable {
       const generatePromptButton = document.getElementById("generatePromptButton");
       const runPreprocessButton = document.getElementById("runPreprocessButton");
       const saveButton = document.getElementById("saveButton");
+      const statusMessage = document.getElementById("statusMessage");
 
       function setSections(values) {
         const checkboxes = document.querySelectorAll('.checkboxes input[type="checkbox"]');
@@ -400,6 +434,7 @@ export class SettingsPanel implements vscode.Disposable {
         }
 
         const settings = payload.settings;
+        statusMessage.textContent = payload.statusMessage || "";
         providerId.value = settings.providerId;
         providerBaseUrl.value = settings.providerBaseUrl || "";
         providerModel.value = settings.providerModel || "";
@@ -422,10 +457,20 @@ export class SettingsPanel implements vscode.Disposable {
         vscode.postMessage({
           type: "generatePrompt",
           payload: {
+            providerId: providerId.value,
+            providerBaseUrl: providerBaseUrl.value,
+            providerModel: providerModel.value,
+            providerApiKeyEnvVar: providerApiKeyEnvVar.value,
+            providerTimeoutMs: Number(providerTimeoutMs.value),
             occupation: occupation.value,
             userGoal: userGoal.value,
             detailLevel: detailLevel.value,
-            professionalLevel: professionalLevel.value
+            professionalLevel: professionalLevel.value,
+            sections: getSections(),
+            reasoningEffort: reasoningEffort.value,
+            temperature: Number(temperature.value),
+            topP: Number(topP.value),
+            maxTokens: Number(maxTokens.value)
           }
         });
       });

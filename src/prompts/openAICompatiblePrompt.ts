@@ -28,8 +28,11 @@ export function buildExplainPrompts(request: ExplanationRequest): {
       "You explain source code in concise Chinese.",
       "Respond with valid JSON only.",
       "Use this exact shape:",
-      '{"title":"string","summary":"string","sections":[{"label":"string","content":"string"}],"suggestedQuestions":["string"],"glossaryHints":[{"term":"string","meaning":"string","category":"variable"}],"note":"string"}',
-      "Keep each sentence short and useful.",
+      '{"title":"string","summary":"string","sections":[{"label":"string","items":["string"],"content":"string"}],"suggestedQuestions":["string"],"glossaryHints":[{"term":"string","meaning":"string","category":"variable"}],"note":"string"}',
+      "Use dictionary-style Chinese.",
+      "Keep the summary to one or two short sentences.",
+      "For each section, prefer 2 to 4 short bullet items in `items` instead of a long paragraph.",
+      "If you still include `content`, keep it short and consistent with the bullet items.",
       "Do not include markdown fences.",
       "Ground the answer in the selected code and nearby context.",
       request.customInstructions
@@ -77,10 +80,11 @@ function buildTokenExplainPrompts(request: ExplanationRequest): {
       "You explain a single code token in concise Chinese.",
       "Return valid JSON only.",
       "Use this shape:",
-      '{"title":"string","summary":"string","sections":[{"label":"string","content":"string"}],"suggestedQuestions":["string"],"glossaryHints":[{"term":"string","meaning":"string","category":"variable"}],"note":"string"}',
+      '{"title":"string","summary":"string","sections":[{"label":"string","items":["string"],"content":"string"}],"suggestedQuestions":["string"],"glossaryHints":[{"term":"string","meaning":"string","category":"variable"}],"note":"string"}',
       "Focus on the token's exact role at this callsite and in the current line.",
       "If the token is a library, framework, or API symbol, explain that concrete API usage here instead of giving a generic placeholder summary.",
       "If the meaning is still ambiguous, say exactly what context is missing.",
+      "Prefer short dictionary-style bullet items instead of long prose.",
       "Avoid generic placeholder wording.",
       request.customInstructions
     ].join(" "),
@@ -119,7 +123,7 @@ export function buildFollowUpPrompts(request: FollowUpRequest): {
   return {
     system: [
       "You continue a code-reading conversation in concise Chinese.",
-      "Answer directly.",
+      "Answer directly with 2 to 4 short bullet points when possible.",
       "Keep the explanation grounded in the prior explanation and user question.",
       request.request.customInstructions || ""
     ].join(" "),

@@ -4,6 +4,7 @@ import {
   ExplanationGranularity,
   ExplanationResponse,
   GlossaryEntry,
+  PreprocessedSymbolEntry,
   PreprocessProgress,
   ReasoningEffort,
   WorkspaceIndex
@@ -14,6 +15,7 @@ export interface ExplanationPanelState {
   chatHistory: ChatTurn[];
   workspaceIndex?: WorkspaceIndex;
   glossaryEntries: GlossaryEntry[];
+  wordbookEntries: PreprocessedSymbolEntry[];
   statusMessage?: string;
   isWatchingSelection?: boolean;
   currentFile?: string;
@@ -35,7 +37,8 @@ export class ExplanationPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private state: ExplanationPanelState = {
     chatHistory: [],
-    glossaryEntries: []
+    glossaryEntries: [],
+    wordbookEntries: []
   };
 
   constructor(
@@ -268,6 +271,12 @@ export class ExplanationPanel implements vscode.Disposable {
         margin-bottom: 4px;
       }
 
+      .list-item-meta {
+        margin-top: 4px;
+        color: var(--vscode-descriptionForeground);
+        font-size: 11px;
+      }
+
       .muted {
         color: var(--vscode-descriptionForeground);
       }
@@ -283,6 +292,17 @@ export class ExplanationPanel implements vscode.Disposable {
         border-radius: 10px;
         background: color-mix(in srgb, var(--vscode-inputOption-activeBackground) 55%, transparent);
         border: 1px solid color-mix(in srgb, var(--vscode-inputOption-activeBorder) 55%, transparent);
+      }
+
+      .bullet-list {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+
+      .bullet-list li {
+        line-height: 1.5;
       }
 
       .progress-wrap {
@@ -399,6 +419,10 @@ export class ExplanationPanel implements vscode.Disposable {
             </div>
           </div>
           <div>
+            <div class="label">File Wordbook</div>
+            <div id="wordbook" class="list"></div>
+          </div>
+          <div>
             <div class="label">Sections</div>
             <div id="sections" class="stack"></div>
           </div>
@@ -450,6 +474,7 @@ export class ExplanationPanel implements vscode.Disposable {
       const detectedType = document.getElementById("detectedType");
       const preprocessMeta = document.getElementById("preprocessMeta");
       const preprocessFill = document.getElementById("preprocessFill");
+      const wordbook = document.getElementById("wordbook");
       const sections = document.getElementById("sections");
       const suggestions = document.getElementById("suggestions");
       const glossary = document.getElementById("glossary");
@@ -459,6 +484,17 @@ export class ExplanationPanel implements vscode.Disposable {
       const reasoningEffortSelect = document.getElementById("reasoningEffortSelect");
       const sendButton = document.getElementById("sendButton");
 
+      function renderBulletList(items) {
+        const list = document.createElement("ul");
+        list.className = "bullet-list";
+        for (const item of items) {
+          const li = document.createElement("li");
+          li.textContent = item;
+          list.appendChild(li);
+        }
+        return list;
+      }
+
       function renderSection(section) {
         const wrapper = document.createElement("div");
         wrapper.className = "section";
@@ -467,16 +503,20 @@ export class ExplanationPanel implements vscode.Disposable {
         label.className = "label";
         label.textContent = section.label;
 
-        const content = document.createElement("div");
-        content.className = "summary";
-        content.textContent = section.content;
-
         wrapper.appendChild(label);
-        wrapper.appendChild(content);
+        if (section.items && section.items.length) {
+          wrapper.appendChild(renderBulletList(section.items));
+        }
+        if (section.content && !(section.items && section.items.length)) {
+          const content = document.createElement("div");
+          content.className = "summary";
+          content.textContent = section.content;
+          wrapper.appendChild(content);
+        }
         return wrapper;
       }
 
-      function renderListItem(titleText, bodyText) {
+      function renderListItem(titleText, bodyText, metaText) {
         const wrapper = document.createElement("div");
         wrapper.className = "list-item";
 
@@ -490,6 +530,12 @@ export class ExplanationPanel implements vscode.Disposable {
         const body = document.createElement("div");
         body.textContent = bodyText;
         wrapper.appendChild(body);
+        if (metaText) {
+          const meta = document.createElement("div");
+          meta.className = "list-item-meta";
+          meta.textContent = metaText;
+          wrapper.appendChild(meta);
+        }
         return wrapper;
       }
 
@@ -594,6 +640,21 @@ export class ExplanationPanel implements vscode.Disposable {
 
         renderDetectedType(payload.currentGranularity);
         renderPreprocess(payload.preprocessProgress);
+
+        wordbook.innerHTML = "";
+        if ((payload.wordbookEntries || []).length) {
+          for (const entry of payload.wordbookEntries.slice(0, 12)) {
+            wordbook.appendChild(
+              renderListItem(
+                entry.term,
+                entry.summary,
+                entry.category + " | line " + entry.sourceLine
+              )
+            );
+          }
+        } else {
+          renderEmpty(wordbook, "Run preprocessing to build the current file wordbook.");
+        }
 
         sections.innerHTML = "";
         if (explanation?.sections?.length) {

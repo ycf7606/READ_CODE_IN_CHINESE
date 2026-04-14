@@ -4,7 +4,7 @@
 
 Every future work session must read these files in order before making changes:
 
-1. `D:\project\代码翻译\后续开发Prompt.md`
+1. `D:\project\代码翻译\后续开发prompt.md`
 2. `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
 3. The latest file under `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\`
 4. Any stage baseline file directly referenced by the workboard
@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 12
-- Latest summary: `docs/project/summaries/2026-04-14-stage-12.md`
+- Latest completed milestone: Stage 13
+- Latest summary: `docs/project/summaries/2026-04-14-stage-13.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -37,6 +37,7 @@ Every future work session must read these files in order before making changes:
 | 10 | Token workflow and settings UX | Completed | Token cache, onboarding settings, loading UI, granularity UI, and reasoning selector |
 | 11 | Token knowledge prebuild | Completed | Knowledge-grounded token prebuild, expanded settings, and real API validation |
 | 12 | File preprocess and cancellation | Completed | File-scoped symbol preprocessing, stale-request cancellation, grounded token prompts, and settings persistence hardening |
+| 13 | Dictionary UX and prompt generation | Completed | Visible file wordbook, remote prompt-profile generation, concise bullet rendering, and real provider validation |
 
 ## Completed Tasks
 
@@ -103,6 +104,12 @@ Every future work session must read these files in order before making changes:
 - [x] S12-03 Ground token prompts in selection-line previews and strengthen remote content parsing.
 - [x] S12-04 Harden settings persistence, generated-prompt workflow, and preprocess progress scoping.
 - [x] S12-05 Produce the Stage 12 summary file.
+- [x] S13-01 Expose the current file preprocess cache as a visible wordbook inside the explanation panel.
+- [x] S13-02 Replace local prompt-template generation in the settings panel with provider-backed prompt-profile generation and local fallback.
+- [x] S13-03 Make dictionary-style bullet rendering the default panel presentation and repair corrupted local fallback strings.
+- [x] S13-04 Load and refresh wordbook state on activation, editor switch, save, and preprocess completion.
+- [x] S13-05 Add tests for prompt-profile generation and remote section-item normalization.
+- [x] S13-06 Produce the Stage 13 summary file.
 
 ## Current Todo
 
@@ -118,11 +125,12 @@ Every future work session must read these files in order before making changes:
 
 ## Notes
 
-- The core extension workflow is implemented end-to-end and validated by compile, unit tests, remote provider smoke tests, and official docs sync smoke tests.
+- The core extension workflow is implemented end-to-end and validated by compile, unit tests, and real provider smoke tests.
 - A Stage 9 fix closed the gap where VS Code schema defaults could hide env-based provider settings during development-host testing.
 - A Stage 10 update added a dedicated token explanation workflow and user-facing settings UI so token explanations are less template-like and more controllable.
 - A Stage 11 update turned token knowledge into a real prebuild workflow backed by synced docs plus remote reasoning, instead of only caching after first use.
 - A Stage 12 update replaced the broad token prebuild behavior with file-scoped symbol preprocessing, added stale-task cancellation, and improved single-token prompt grounding with exact callsite previews.
+- A Stage 13 update exposed the file preprocess cache as a visible wordbook, switched settings prompt generation to the remote provider when available, and tightened the UI around concise dictionary-style bullet output.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

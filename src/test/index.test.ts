@@ -1,4 +1,4 @@
-import test from "node:test";
+﻿import test from "node:test";
 import assert from "node:assert/strict";
 import { promises as fs } from "fs";
 import * as os from "os";
@@ -21,6 +21,7 @@ import { TokenKnowledgeStore } from "../knowledge/tokenKnowledgeStore";
 import { generateGlobalPrompt } from "../prompts/globalPromptProfile";
 import { buildExplainPrompts } from "../prompts/openAICompatiblePrompt";
 import { LocalExplanationProvider } from "../providers/localProvider";
+import { OpenAICompatibleProvider } from "../providers/openAICompatibleProvider";
 import { WorkspaceStore } from "../storage/workspaceStore";
 import {
   ExplanationRequest,
@@ -326,6 +327,7 @@ test("cached preprocess explanation returns quick token summary", () => {
 
   assert.equal(response.source, "preprocess-cache");
   assert.equal(response.summary, "保存当前文件里构建好的特征映射结果。");
+  assert.deepEqual(response.sections[0]?.items, ["保存当前文件里构建好的特征映射结果。"]);
 });
 
 test("token knowledge store still reads back remote token cache", async () => {
@@ -410,3 +412,111 @@ test("token explain prompt includes selection preview and glossary hints", () =>
   assert.match(prompts.user, /Glossary hints:/);
   assert.match(prompts.system, /concrete API usage/i);
 });
+
+test("local prompt generator keeps dictionary-style guidance", async () => {
+  const provider = new LocalExplanationProvider();
+  const response = await provider.generatePromptProfile({
+    occupation: "developer",
+    professionalLevel: "intermediate",
+    detailLevel: "balanced",
+    sections: ["summary", "usage"],
+    userGoal: "Understand model inference code",
+    reasoningEffort: "medium",
+    temperature: 0.2,
+    topP: 1,
+    maxTokens: 900
+  });
+
+  assert.equal(response.source, "local");
+  assert.match(response.prompt, /dictionary-like style/i);
+  assert.match(response.prompt, /Understand model inference code/);
+});
+
+test("openai provider normalizes section items from remote json", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.TEST_OPENAI_PROVIDER_KEY = "test-key";
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                title: "Tensor Call",
+                summary: "解释成功。",
+                sections: [
+                  {
+                    label: "usage",
+                    content: "删除长度为 1 的维度。 常见于整理 tensor 形状。"
+                  }
+                ],
+                suggestedQuestions: [],
+                glossaryHints: []
+              })
+            }
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    )) as unknown as typeof fetch;
+
+  try {
+    const provider = new OpenAICompatibleProvider({
+      autoExplainEnabled: false,
+      autoExplainDelayMs: 600,
+      autoOpenPanel: true,
+      providerId: "openai-compatible",
+      providerBaseUrl: "https://example.com/v1",
+      providerModel: "gpt-5.4",
+      providerApiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY",
+      providerTimeoutMs: 1000,
+      providerTemperature: 0.2,
+      providerTopP: 1,
+      providerMaxTokens: 1200,
+      providerReasoningEffort: "medium",
+      detailLevel: "balanced",
+      professionalLevel: "intermediate",
+      occupation: "developer",
+      sections: ["summary", "usage"],
+      userGoal: "",
+      knowledgeTopK: 3,
+      customInstructions: ""
+    });
+    const response = await provider.explain({
+      requestId: "remote-json",
+      reason: "manual",
+      languageId: "python",
+      filePath: "D:/workspace/model.py",
+      relativeFilePath: "model.py",
+      selectedText: "squeeze",
+      selectionPreview: "x = tensor.[[squeeze]](0)",
+      granularity: "token",
+      detailLevel: "balanced",
+      professionalLevel: "intermediate",
+      sections: ["summary", "usage"],
+      userGoal: "",
+      customInstructions: "",
+      contextBefore: "tensor = output",
+      contextAfter: "",
+      glossaryEntries: [],
+      knowledgeSnippets: []
+    });
+
+    assert.equal(response.source, "openai-compatible");
+    assert.equal(response.sections[0]?.label, "usage");
+    assert.deepEqual(response.sections[0]?.items, [
+      "删除长度为 1 的维度。",
+      "常见于整理 tensor 形状。"
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.TEST_OPENAI_PROVIDER_KEY;
+  }
+});
+

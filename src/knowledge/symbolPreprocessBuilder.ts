@@ -9,11 +9,11 @@ import {
   PreprocessProgress,
   SymbolPreprocessRequest
 } from "../contracts";
+import { buildPreprocessCandidates } from "../analysis/preprocess";
 import { ExtensionLogger } from "../logging/logger";
 import { ExplanationProvider } from "../providers/providerTypes";
 import { WorkspaceStore } from "../storage/workspaceStore";
 import { createContentHash } from "../utils/hash";
-import { buildPreprocessCandidates } from "../analysis/preprocess";
 import { PreprocessStore } from "./preprocessStore";
 
 export interface BuildSymbolPreprocessOptions {
@@ -47,12 +47,13 @@ export function buildCachedPreprocessExplanation(
     sections: [
       {
         label: "summary",
-        content: entry.summary
+        content: entry.summary,
+        items: [entry.summary]
       }
     ],
     suggestedQuestions: [
-      "这个符号在当前函数里具体接收了什么值？",
-      "它和上游调用链是什么关系？"
+      "这个符号在当前语句里具体接收了什么值？",
+      "它和上游调用链之间是什么关系？"
     ],
     glossaryHints: request.glossaryEntries.filter(
       (glossaryEntry) => glossaryEntry.normalizedTerm === entry.normalizedTerm
@@ -96,6 +97,7 @@ export async function buildSymbolPreprocessCache(
         }
       )
     );
+
     return {
       cacheFile: existingCache,
       candidates,
@@ -118,6 +120,7 @@ export async function buildSymbolPreprocessCache(
         message: "No user-defined symbols need preprocessing in this file."
       })
     );
+
     return {
       cacheFile: emptyCache,
       candidates: [],
@@ -165,9 +168,7 @@ export async function buildSymbolPreprocessCache(
     signal: options.signal
   });
 
-  const entryMap = new Map(
-    response.entries.map((entry) => [entry.normalizedTerm, entry])
-  );
+  const entryMap = new Map(response.entries.map((entry) => [entry.normalizedTerm, entry]));
   const normalizedEntries = candidates.map((candidate) => {
     const existingEntry = entryMap.get(candidate.normalizedTerm);
 
@@ -177,11 +178,14 @@ export async function buildSymbolPreprocessCache(
         normalizedTerm: candidate.normalizedTerm,
         category: candidate.category,
         sourceLine: candidate.sourceLine,
-        summary: `\`${candidate.term}\` 是当前文件里的一个关键${candidate.category === "function" ? "函数" : "符号"}。`,
+        summary: `\`${candidate.term}\` 是当前文件中的${toCategoryLabel(
+          candidate.category
+        )}，作用要结合附近逻辑继续确认。`,
         generatedAt: new Date().toISOString()
       }
     );
   });
+
   const cacheFile: PreprocessedSymbolCacheFile = {
     languageId: options.languageId,
     relativeFilePath: options.relativeFilePath,
@@ -234,6 +238,19 @@ export async function buildSymbolPreprocessCache(
     candidates,
     source: response.source
   };
+}
+
+function toCategoryLabel(category: PreprocessedSymbolCandidate["category"]): string {
+  switch (category) {
+    case "function":
+      return "函数";
+    case "class":
+      return "类";
+    case "type":
+      return "类型";
+    default:
+      return "变量";
+  }
 }
 
 function createProgress(

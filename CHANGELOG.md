@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased - 2026-04-14
+
+- Added a visible file wordbook section in the explanation panel, backed by the current file preprocess cache
+- Switched settings-panel prompt generation from local string concatenation to provider-backed prompt-profile generation with local fallback
+- Tightened dictionary-style rendering so section bullet items are shown without duplicated paragraph text
+- Repaired corrupted fallback Chinese strings in local, preprocess-cache, and follow-up paths
+- Added tests for prompt-profile generation and remote section-item normalization
+- Validated both prompt generation and token explanation against the configured OpenAI-compatible `gpt-5.4` endpoint
+
 ## 0.6.0 - 2026-04-14
 
 - Replaced broad token prebuild behavior with file-scoped user-defined symbol preprocessing

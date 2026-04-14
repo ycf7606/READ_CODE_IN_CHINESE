@@ -131,6 +131,7 @@ export interface ExplanationRequest {
 export interface ExplanationSection {
   label: string;
   content: string;
+  items?: string[];
 }
 
 export interface ExplanationResponse {
@@ -239,6 +240,25 @@ export interface SymbolPreprocessResponse {
   entries: PreprocessedSymbolEntry[];
   source: string;
   latencyMs: number;
+}
+
+export interface PromptProfileRequest {
+  occupation: Occupation;
+  professionalLevel: ProfessionalLevel;
+  detailLevel: DetailLevel;
+  sections: ExplanationSectionName[];
+  userGoal: string;
+  reasoningEffort: ReasoningEffort;
+  temperature: number;
+  topP: number;
+  maxTokens: number;
+}
+
+export interface PromptProfileResponse {
+  prompt: string;
+  source: string;
+  latencyMs: number;
+  note?: string;
 }
 
 export interface PreprocessProgress {

@@ -493,3 +493,58 @@
   - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-12.md`
 - Verification:
   - Manual review of the updated context files
+
+### S13-01 Expose file wordbook in the explanation panel
+
+- Stage: 13
+- Result: The explanation panel now shows a visible file wordbook backed by the current file preprocess cache, and it refreshes when the editor context changes.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\knowledge\symbolPreprocessBuilder.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S13-02 Switch settings prompt generation to the provider
+
+- Stage: 13
+- Result: The settings panel now sends the full audience and provider profile to the configured provider for prompt generation, with local fallback if the remote provider fails.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\settingsPanel.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\providerTypes.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\openAICompatibleProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\localProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\prompts\globalPromptProfile.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - Real prompt-profile smoke test through `dist/providers/openAICompatibleProvider.js`
+
+### S13-03 Tighten dictionary-style presentation and fallback text
+
+- Stage: 13
+- Result: Section rendering now prefers bullet items without duplicated paragraph content, and local/cache fallback strings were rewritten into concise readable Chinese.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\analysis\summary.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\localProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\openAICompatibleProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S13-04 Add tests and publish the Stage 13 summary
+
+- Stage: 13
+- Result: Added regression coverage for prompt-profile generation and section-item normalization, then updated project docs and stage tracking files.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\test\index.test.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-13.md`
+- Verification:
+  - `npm.cmd test`
+  - Real remote `squeeze` explanation smoke test through `dist/providers/openAICompatibleProvider.js`
