@@ -597,3 +597,42 @@
 - Verification:
   - `npm.cmd test`
   - Real preprocess smoke test through `dist/providers/openAICompatibleProvider.js`
+
+### S15-01 Tighten the default medium wordbook profile
+
+- Stage: 15
+- Result: The default `intermediate` preprocessing profile now behaves like the intended medium audience and skips overly common symbols such as `forward`.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\analysis\preprocess.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\test\index.test.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S15-02 Inject audience profile directly into explanation prompts
+
+- Stage: 15
+- Result: Explanation requests now carry `occupation`, and runtime explain/follow-up prompts explicitly include both occupation and professional level to keep outputs audience-aware even without regenerating the editable prompt.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\contracts.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\prompts\openAICompatiblePrompt.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\knowledge\tokenKnowledgeBuilder.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+  - Prompt smoke inspection through `dist/prompts/openAICompatiblePrompt.js`
+
+### S15-03 Publish Stage 15 tracking and smoke results
+
+- Stage: 15
+- Result: Updated docs and tracking, then confirmed by smoke test that `intermediate` candidates no longer include `forward` while token prompts explicitly show `Occupation` and `Professional level`.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-15.md`
+- Verification:
+  - `npm.cmd test`
+  - Prompt and candidate smoke inspection through `dist/analysis/preprocess.js` and `dist/prompts/openAICompatiblePrompt.js`

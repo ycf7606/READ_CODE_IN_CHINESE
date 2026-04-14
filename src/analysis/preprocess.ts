@@ -15,9 +15,9 @@ const CATEGORY_WEIGHT: Record<PreprocessedSymbolCategory, number> = {
 };
 
 const PROFESSIONAL_BASE_LIMIT: Record<ProfessionalLevel, number> = {
-  beginner: 26,
-  intermediate: 16,
-  expert: 8
+  beginner: 24,
+  intermediate: 12,
+  expert: 6
 };
 
 const OCCUPATION_LIMIT_DELTA: Record<Occupation, number> = {
@@ -174,7 +174,8 @@ function isTooCommonForAudience(
   if (
     entry.category === "function" &&
     COMMON_FUNCTION_TERMS.has(normalizedTerm) &&
-    professionalLevel === "expert"
+    professionalLevel === "intermediate" &&
+    entry.references <= 2
   ) {
     return true;
   }
@@ -182,27 +183,25 @@ function isTooCommonForAudience(
   if (
     (entry.category === "variable" || entry.category === "label") &&
     COMMON_VARIABLE_TERMS.has(normalizedTerm) &&
-    professionalLevel === "expert"
-  ) {
-    return true;
-  }
-
-  if (
     professionalLevel === "intermediate" &&
-    entry.category === "function" &&
-    COMMON_FUNCTION_TERMS.has(normalizedTerm) &&
-    entry.references <= 1 &&
+    entry.references <= 2 &&
     occupation !== "student"
   ) {
     return true;
   }
 
   if (
-    professionalLevel === "intermediate" &&
+    entry.category === "function" &&
+    COMMON_FUNCTION_TERMS.has(normalizedTerm) &&
+    professionalLevel === "expert"
+  ) {
+    return true;
+  }
+
+  if (
     (entry.category === "variable" || entry.category === "label") &&
     COMMON_VARIABLE_TERMS.has(normalizedTerm) &&
-    entry.references <= 2 &&
-    occupation === "developer"
+    professionalLevel === "expert"
   ) {
     return true;
   }

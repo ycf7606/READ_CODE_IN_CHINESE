@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 14
-- Latest summary: `docs/project/summaries/2026-04-14-stage-14.md`
+- Latest completed milestone: Stage 15
+- Latest summary: `docs/project/summaries/2026-04-14-stage-15.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -39,6 +39,7 @@ Every future work session must read these files in order before making changes:
 | 12 | File preprocess and cancellation | Completed | File-scoped symbol preprocessing, stale-request cancellation, grounded token prompts, and settings persistence hardening |
 | 13 | Dictionary UX and prompt generation | Completed | Visible file wordbook, remote prompt-profile generation, concise bullet rendering, and real provider validation |
 | 14 | Audience-aware wordbook preprocessing | Completed | Two-step candidate selection, label coverage, preprocess prompt isolation, and focus-safe watched updates |
+| 15 | Medium-default audience tuning | Completed | Stricter intermediate wordbook filtering and stronger occupation/profession-aware explanation prompts |
 
 ## Completed Tasks
 
@@ -117,6 +118,10 @@ Every future work session must read these files in order before making changes:
 - [x] S14-04 Stop watched updates from repeatedly re-revealing the panel and pulling focus away from the source editor.
 - [x] S14-05 Add tests and real smoke validation for the new wordbook candidate pipeline.
 - [x] S14-06 Produce the Stage 14 summary file.
+- [x] S15-01 Tighten `intermediate` wordbook filtering so the default medium profile skips trivial common symbols.
+- [x] S15-02 Inject occupation and professional level directly into explanation requests and runtime prompts.
+- [x] S15-03 Add regression coverage and smoke validation for medium-default filtering and audience-aware prompt shaping.
+- [x] S15-04 Produce the Stage 15 summary file.
 
 ## Current Todo
 
@@ -139,6 +144,7 @@ Every future work session must read these files in order before making changes:
 - A Stage 12 update replaced the broad token prebuild behavior with file-scoped symbol preprocessing, added stale-task cancellation, and improved single-token prompt grounding with exact callsite previews.
 - A Stage 13 update exposed the file preprocess cache as a visible wordbook, switched settings prompt generation to the remote provider when available, and tightened the UI around concise dictionary-style bullet output.
 - A Stage 14 update made preprocessing audience-aware, added label/string coverage, isolated the wordbook prompt from explanation sections, and reduced focus disruption while the panel watches selection changes.
+- A Stage 15 update tightened the default medium (`intermediate`) wordbook profile and made runtime explanation prompts explicitly audience-aware even without regenerating the editable prompt.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

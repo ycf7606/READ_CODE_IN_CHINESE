@@ -1737,6 +1737,7 @@ async function createExplanationRequest(
     selectionPreview,
     granularity,
     detailLevel: settings.detailLevel,
+    occupation: settings.occupation,
     professionalLevel: settings.professionalLevel,
     sections: settings.sections,
     userGoal: settings.userGoal,

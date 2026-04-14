@@ -70,10 +70,10 @@ The extension is designed to make source code easier to read by combining:
 6. Knowledge snippets are retrieved from imported or synced documents
 7. If the selection is a token, the extension first checks the active file's preprocess cache
 8. On preprocess-cache miss, it checks the older token knowledge cache
-9. Explanation request is built with user goal, custom prompt instructions, selection-line preview, and provider hyperparameters
+9. Explanation request is built with user goal, occupation, professional level, custom prompt instructions, selection-line preview, and provider hyperparameters
 10. Settings-panel prompt generation can call the configured provider to synthesize a reusable global prompt from the current user profile
 11. Local or remote provider returns a structured explanation grounded in the exact callsite context
-12. In the background, the extension first selects audience-appropriate wordbook candidates from the current file glossary
+12. In the background, the extension first selects audience-appropriate wordbook candidates from the current file glossary, with `intermediate` acting as the default medium-strength filter
 13. It then preprocesses only those selected symbols in one full-file batch using a dedicated wordbook prompt that ignores explanation sections
 14. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins
 15. Successful remote token explanations can still be written into the token knowledge cache

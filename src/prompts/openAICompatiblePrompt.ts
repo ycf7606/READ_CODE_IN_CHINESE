@@ -35,6 +35,7 @@ export function buildExplainPrompts(request: ExplanationRequest): {
       "If you still include `content`, keep it short and consistent with the bullet items.",
       "Do not include markdown fences.",
       "Ground the answer in the selected code and nearby context.",
+      buildAudienceGuidance(request),
       request.customInstructions
     ].join(" "),
     user: [
@@ -42,6 +43,7 @@ export function buildExplainPrompts(request: ExplanationRequest): {
       `Language: ${request.languageId}`,
       `Granularity: ${request.granularity}`,
       `Detail level: ${request.detailLevel}`,
+      `Occupation: ${request.occupation}`,
       `Professional level: ${request.professionalLevel}`,
       `Requested sections: ${request.sections.join(", ")}`,
       "",
@@ -86,11 +88,14 @@ function buildTokenExplainPrompts(request: ExplanationRequest): {
       "If the meaning is still ambiguous, say exactly what context is missing.",
       "Prefer short dictionary-style bullet items instead of long prose.",
       "Avoid generic placeholder wording.",
+      buildAudienceGuidance(request),
       request.customInstructions
     ].join(" "),
     user: [
       `Language: ${request.languageId}`,
       `Token: ${request.selectedText}`,
+      `Occupation: ${request.occupation}`,
+      `Professional level: ${request.professionalLevel}`,
       `Goal: ${request.userGoal || "Explain the exact meaning of this token."}`,
       "",
       "Selection line preview:",
@@ -125,11 +130,14 @@ export function buildFollowUpPrompts(request: FollowUpRequest): {
       "You continue a code-reading conversation in concise Chinese.",
       "Answer directly with 2 to 4 short bullet points when possible.",
       "Keep the explanation grounded in the prior explanation and user question.",
+      buildAudienceGuidance(request.request),
       request.request.customInstructions || ""
     ].join(" "),
     user: [
       `Current explanation title: ${request.explanation.title}`,
       `Summary: ${request.explanation.summary}`,
+      `Occupation: ${request.request.occupation}`,
+      `Professional level: ${request.request.professionalLevel}`,
       "Recent chat history:",
       historyText || "(none)",
       "",
@@ -139,6 +147,27 @@ export function buildFollowUpPrompts(request: FollowUpRequest): {
       `User question: ${request.question}`
     ].join("\n")
   };
+}
+
+function buildAudienceGuidance(request: ExplanationRequest): string {
+  const occupationGuidance =
+    request.occupation === "student"
+      ? "Prefer teaching-style wording and define symbols before abstract relations."
+      : request.occupation === "developer"
+        ? "Prioritize implementation intent, data flow, and maintenance-relevant meaning."
+        : request.occupation === "data-scientist"
+          ? "Prioritize tensor, feature, shape, pipeline, and modeling meaning when relevant."
+          : request.occupation === "researcher"
+            ? "Prioritize assumptions, algorithmic role, and experimental context when relevant."
+            : "Prioritize module boundaries, operational impact, and hidden coupling when relevant.";
+  const levelGuidance =
+    request.professionalLevel === "beginner"
+      ? "Assume less prior context and explain symbols more directly."
+      : request.professionalLevel === "intermediate"
+        ? "Assume medium familiarity, skip trivial syntax, and keep the answer compact."
+        : "Assume strong prior knowledge, skip obvious framework conventions, and stay terse.";
+
+  return `${occupationGuidance} ${levelGuidance}`;
 }
 
 export function buildSymbolPreprocessPrompts(request: SymbolPreprocessRequest): {

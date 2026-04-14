@@ -194,6 +194,7 @@ async function createTokenKnowledgeRequest(
     selectionPreview: `${options.contextBefore ?? ""}[[${options.term}]]${options.contextAfter ?? ""}`,
     granularity: "token",
     detailLevel: options.settings.detailLevel,
+    occupation: options.settings.occupation,
     professionalLevel: options.settings.professionalLevel,
     sections: options.settings.sections,
     userGoal:

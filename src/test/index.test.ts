@@ -89,6 +89,7 @@ test("local provider returns structured explanation output", async () => {
     selectionPreview: "[[function loadUsers(userId) { return fetchUser(userId); }]]",
     granularity: "function",
     detailLevel: "balanced",
+    occupation: "developer",
     professionalLevel: "intermediate",
     sections: ["summary", "inputOutput", "usage"],
     userGoal: "Understand the function quickly",
@@ -175,12 +176,14 @@ test("preprocess candidate builder focuses on user-defined symbols", () => {
   );
 
   const beginner = buildPreprocessCandidates(glossaryEntries, "beginner", "student");
+  const intermediate = buildPreprocessCandidates(glossaryEntries, "intermediate", "developer");
   const expert = buildPreprocessCandidates(glossaryEntries, "expert", "developer");
 
   assert.ok(beginner.some((entry) => entry.term === "featureMap"));
   assert.ok(beginner.some((entry) => entry.term === "buildFeatureMap"));
   assert.ok(beginner.some((entry) => entry.term === "PCA"));
   assert.ok(!beginner.some((entry) => entry.term === "torch"));
+  assert.ok(!intermediate.some((entry) => entry.term === "forward"));
   assert.ok(!expert.some((entry) => entry.term === "forward"));
   assert.ok(beginner.length >= expert.length);
 });
@@ -315,6 +318,7 @@ test("cached preprocess explanation returns quick token summary", () => {
     selectionPreview: "const [[featureMap]] = buildFeatureMap(values);",
     granularity: "token",
     detailLevel: "balanced",
+    occupation: "developer",
     professionalLevel: "intermediate",
     sections: ["summary"],
     userGoal: "",
@@ -420,6 +424,7 @@ test("token explain prompt includes selection preview and glossary hints", () =>
     selectionPreview: "y = x.[[squeeze]](0)",
     granularity: "token",
     detailLevel: "balanced",
+    occupation: "data-scientist",
     professionalLevel: "intermediate",
     sections: ["summary", "usage"],
     userGoal: "Understand tensor ops",
@@ -441,9 +446,12 @@ test("token explain prompt includes selection preview and glossary hints", () =>
   });
 
   assert.match(prompts.user, /Selection line preview:/);
+  assert.match(prompts.user, /Occupation: data-scientist/);
+  assert.match(prompts.user, /Professional level: intermediate/);
   assert.match(prompts.user, /y = x\.\[\[squeeze\]\]\(0\)/);
   assert.match(prompts.user, /Glossary hints:/);
   assert.match(prompts.system, /concrete API usage/i);
+  assert.match(prompts.system, /tensor, feature, shape, pipeline/i);
 });
 
 test("local prompt generator keeps dictionary-style guidance", async () => {
@@ -531,6 +539,7 @@ test("openai provider normalizes section items from remote json", async () => {
       selectionPreview: "x = tensor.[[squeeze]](0)",
       granularity: "token",
       detailLevel: "balanced",
+      occupation: "developer",
       professionalLevel: "intermediate",
       sections: ["summary", "usage"],
       userGoal: "",

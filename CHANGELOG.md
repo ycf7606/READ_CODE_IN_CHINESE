@@ -12,6 +12,8 @@
 - Expanded preprocessing coverage to include Python-assigned variables and label-like string terms such as class names
 - Made preprocess prompt shaping independent from explanation section preferences
 - Stopped watched selection updates from repeatedly re-revealing the panel and stealing focus from the source editor
+- Tightened `intermediate` preprocessing so the default medium profile skips overly common symbols such as `forward`
+- Injected `occupation` and `professionalLevel` directly into runtime explanation prompts for more reliable audience-aware wording
 
 ## 0.6.0 - 2026-04-14
 

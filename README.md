@@ -152,6 +152,8 @@ It can also:
 - generate the global prompt through the configured provider using the current audience and hyperparameter profile
 - show prompt-generation status inline before the user saves the final editable prompt
 
+Runtime explanation prompts also inject `occupation` and `professionalLevel` directly, so explanation tone can still adapt even if the editable prompt text is not regenerated after a profile change.
+
 ## Knowledge Import
 
 The extension can import local `.md`, `.txt`, and `.json` files as retrieval documents.
@@ -182,6 +184,9 @@ When the remote provider is enabled, the extension can preprocess the active fil
 - Command: `Read Code In Chinese: Preprocess Current File Symbols`
 - Candidate scope is selected in a first pass using `professionalLevel` and `occupation`
 - The second pass preprocesses only those selected candidates into short wordbook-style entries
+- `professionalLevel = intermediate` acts as the practical default "medium" audience and skips overly common symbols such as `forward`
+- `professionalLevel = beginner` keeps more guidance-heavy entries
+- `professionalLevel = expert` keeps an even smaller wordbook than `intermediate`
 - Preprocess prompt shaping ignores explanation section preferences such as `summary`, `usage`, or `risk`
 - The explanation panel shows total symbol count, batch count, and progress
 - The explanation panel also shows a visible file wordbook sourced from the current file preprocess cache

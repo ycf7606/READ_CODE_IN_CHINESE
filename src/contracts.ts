@@ -124,6 +124,7 @@ export interface ExplanationRequest {
   selectionPreview: string;
   granularity: ExplanationGranularity;
   detailLevel: DetailLevel;
+  occupation: Occupation;
   professionalLevel: ProfessionalLevel;
   sections: ExplanationSectionName[];
   userGoal: string;
