@@ -13,6 +13,7 @@ import {
   mergeGeneratedGlossaryEntries
 } from "../analysis/glossary";
 import { buildDocumentStructureFromSymbols } from "../analysis/documentStructure";
+import { extractTypeScriptAstGlossaryEntries } from "../analysis/typeScriptAstGlossary";
 import { attachWordbookScopePaths } from "../analysis/wordbook";
 import {
   buildFileOverviewSummary,
@@ -21,7 +22,10 @@ import {
 } from "../analysis/summary";
 import { getOfficialDocsPreset } from "../knowledge/officialDocs";
 import { KnowledgeStore } from "../knowledge/knowledgeStore";
-import { PreprocessStore } from "../knowledge/preprocessStore";
+import {
+  PreprocessStore,
+  PREPROCESS_CACHE_BUILDER_VERSION
+} from "../knowledge/preprocessStore";
 import {
   buildCachedPreprocessExplanation,
   buildSymbolPreprocessCache
@@ -92,6 +96,37 @@ test("extractGlossaryEntries includes qualified call symbols", () => {
 
   assert.ok(glossaryEntries.some((entry) => entry.term === "Parameter" && entry.category === "class"));
   assert.ok(glossaryEntries.some((entry) => entry.term === "empty" && entry.category === "function"));
+});
+
+test("extractGlossaryEntries includes python decorator and aliased import usage", () => {
+  const sourceCode = [
+    "from project.decorators import cached as use_cache",
+    "@use_cache",
+    "def build_model():",
+    "    return factory()"
+  ].join("\n");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "python");
+
+  assert.ok(glossaryEntries.some((entry) => entry.term === "use_cache" && entry.category === "function"));
+});
+
+test("typescript AST extraction includes aliased imports, decorators, and chained external calls", () => {
+  const entries = extractTypeScriptAstGlossaryEntries(
+    [
+      "import { observer as mobxObserver } from 'mobx-react-lite';",
+      "import * as tf from '@tensorflow/tfjs';",
+      "import QueryClient from '@tanstack/query-core';",
+      "@mobxObserver",
+      "class Store {}",
+      "const layer = tf.layers.dense({ units: 32 });",
+      "const client = new QueryClient();"
+    ].join("\n"),
+    "typescript"
+  );
+
+  assert.ok(entries.some((entry) => entry.term === "mobxObserver" && entry.category === "function"));
+  assert.ok(entries.some((entry) => entry.term === "dense" && entry.category === "function"));
+  assert.ok(entries.some((entry) => entry.term === "QueryClient" && entry.category === "class"));
 });
 
 test("mergeGeneratedGlossaryEntries prefers local origin and keeps scope path", () => {
@@ -432,6 +467,7 @@ test("preprocess store reads back file-scoped cache entries", async () => {
     languageId: "typescript",
     relativeFilePath: "src/example.ts",
     sourceHash: "hash-1",
+    builderVersion: PREPROCESS_CACHE_BUILDER_VERSION,
     generatedAt: new Date().toISOString(),
     entries: [
       {
@@ -448,6 +484,38 @@ test("preprocess store reads back file-scoped cache entries", async () => {
   const cached = await preprocessStore.findEntry("src/example.ts", "hash-1", "featureMap");
 
   assert.equal(cached?.summary, "Stores the processed feature mapping.");
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
+});
+
+test("preprocess store ignores outdated builder versions", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-preprocess-store-version-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const preprocessStore = new PreprocessStore(store);
+
+  await preprocessStore.write("src/example.ts", {
+    languageId: "typescript",
+    relativeFilePath: "src/example.ts",
+    sourceHash: "hash-1",
+    builderVersion: PREPROCESS_CACHE_BUILDER_VERSION - 1,
+    generatedAt: new Date().toISOString(),
+    entries: [
+      {
+        term: "featureMap",
+        normalizedTerm: "featuremap",
+        category: "variable",
+        sourceLine: 3,
+        summary: "stale entry",
+        generatedAt: new Date().toISOString()
+      }
+    ]
+  });
+
+  const cached = await preprocessStore.findEntry("src/example.ts", "hash-1", "featureMap");
+
+  assert.equal(cached, undefined);
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 
@@ -690,6 +758,7 @@ test("symbol preprocess builder ignores placeholder cache entries", async () => 
     languageId: "typescript",
     relativeFilePath: "src/example.ts",
     sourceHash,
+    builderVersion: PREPROCESS_CACHE_BUILDER_VERSION,
     generatedAt: new Date().toISOString(),
     entries: [
       {

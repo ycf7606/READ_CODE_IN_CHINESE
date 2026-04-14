@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 21
-- Latest summary: `docs/project/summaries/2026-04-14-stage-21.md`
+- Latest completed milestone: Stage 22
+- Latest summary: `docs/project/summaries/2026-04-15-stage-22.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -46,6 +46,7 @@ Every future work session must read these files in order before making changes:
 | 19 | Wordbook scope tree and member coverage | Completed | Selection-phase progress cleanup, class-member function extraction, and collapsible scope-based wordbook UI |
 | 20 | Selection-focused explanation polish | Completed | Qualified-call API symbol extraction, top-of-page selection focus, markdown rendering, and glossary snapshot removal |
 | 21 | LSP-aware wordbook structure | Completed | Hybrid LSP glossary extraction, local/API wordbook layers, search/scope filters, and per-file expand-state persistence |
+| 22 | Panel recovery and scalable extraction | Completed | Webview script hardening, preprocess cache versioning, TS AST external extraction, Python alias/decorator coverage, and near-selection wordbook filtering |
 
 ## Completed Tasks
 
@@ -156,6 +157,11 @@ Every future work session must read these files in order before making changes:
 - [x] S21-03 Split the wordbook into `File Symbols` and `Library / API Symbols` layers and add term search plus current-class/current-function filtering.
 - [x] S21-04 Persist wordbook tree expansion state, active tab, and wordbook controls per file inside the webview state cache.
 - [x] S21-05 Add regression coverage for merged glossary metadata, document-structure conversion, and preprocess candidate metadata, then produce the Stage 21 summary file.
+- [x] S22-01 Harden the explanation-panel webview so button bindings, ready signaling, and auto-watch survive script/runtime failures.
+- [x] S22-02 Add `builderVersion` invalidation to preprocess caches so stale wordbook entries stop leaking across structural upgrades.
+- [x] S22-03 Add TypeScript AST-backed external symbol extraction for aliased imports, decorators, chained calls, and imported constructors.
+- [x] S22-04 Expand Python external symbol coverage for aliased imports, decorators, and direct imported-alias calls.
+- [x] S22-05 Add large-wordbook mitigation with lazy tree rendering and a `Near selection` scope filter, then produce the Stage 22 summary file.
 
 ## Current Todo
 
@@ -185,6 +191,7 @@ Every future work session must read these files in order before making changes:
 - A Stage 19 update hid misleading selection-phase batch counters, added class-member method extraction, and turned the wordbook page into a compact collapsible scope tree.
 - A Stage 20 update widened preprocessing to qualified API call symbols, highlighted the current selection at the top of the explanation page, added basic markdown rendering, and removed the now-unused glossary snapshot block.
 - A Stage 21 update moved glossary generation to a hybrid regex + LSP structure pipeline, carried symbol origin/scope metadata through the wordbook cache, and upgraded the wordbook tab into a layered searchable tree with per-file persisted expand state.
+- A Stage 22 update hardened the panel webview against script regressions, versioned preprocess caches, added TS AST-backed external extraction plus deeper Python alias/decorator coverage, and reduced large-wordbook rendering cost with lazy tree hydration and near-selection filtering.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

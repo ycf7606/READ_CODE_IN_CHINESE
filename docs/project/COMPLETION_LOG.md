@@ -937,3 +937,25 @@
 
 
 
+
+### S22-01 Recover panel interactivity and scale the wordbook pipeline
+
+- Stage: 22
+- Result: Hardened the explanation-panel webview, added preprocess cache versioning, expanded TS/Python external symbol extraction, and reduced large-wordbook rendering cost with lazy tree hydration plus near-selection filtering.
+- Files:
+  - `src/ui/explanationPanel.ts`
+  - `src/extension.ts`
+  - `src/knowledge/preprocessStore.ts`
+  - `src/knowledge/symbolPreprocessBuilder.ts`
+  - `src/analysis/glossary.ts`
+  - `src/analysis/typeScriptAstGlossary.ts`
+  - `src/contracts.ts`
+  - `src/test/index.test.ts`
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/ARCHITECTURE.md`
+  - `docs/project/WORKBOARD.md`
+  - `docs/project/COMPLETION_LOG.md`
+  - `docs/project/summaries/2026-04-15-stage-22.md`
+- Verification:
+  - `cmd /c npm.cmd test`

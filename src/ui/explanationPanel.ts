@@ -27,13 +27,15 @@ export interface ExplanationPanelState {
   currentClassScope?: string;
   currentFunctionScope?: string;
   currentScopePath?: string[];
+  currentSelectionLine?: number;
 }
 
 type PanelMessage =
   | { type: "ready" }
   | { type: "askQuestion"; question: string }
   | { type: "openSettings" }
-  | { type: "setReasoningEffort"; reasoningEffort: ReasoningEffort };
+  | { type: "setReasoningEffort"; reasoningEffort: ReasoningEffort }
+  | { type: "panelScriptError"; error: string };
 
 export class ExplanationPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
@@ -683,6 +685,21 @@ export class ExplanationPanel implements vscode.Disposable {
 
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
+      window.addEventListener("error", (event) => {
+        vscode.postMessage({
+          type: "panelScriptError",
+          error: event?.error?.stack || event?.message || "Unknown panel script error."
+        });
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        const reason = event?.reason;
+        vscode.postMessage({
+          type: "panelScriptError",
+          error:
+            (reason && (reason.stack || reason.message)) ||
+            String(reason || "Unknown panel promise rejection.")
+        });
+      });
 
       const watchBadge = document.getElementById("watchBadge");
       const loadingSpinner = document.getElementById("loadingSpinner");
@@ -758,13 +775,23 @@ export class ExplanationPanel implements vscode.Disposable {
       }
 
       function formatInlineMarkdown(value) {
-        return escapeHtml(value || "")
-          .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
-          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-          .replace(/__([^_]+)__/g, "<strong>$1</strong>")
-          .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>")
-          .replace(/(?<!_)_([^_]+)_(?!_)/g, "<em>$1</em>")
-          .replace(/\`([^\`]+)\`/g, "<code>$1</code>");
+        const placeholders = [];
+        const stash = (html) => {
+          placeholders.push(html);
+          return "@@INLINE_TOKEN_" + (placeholders.length - 1) + "@@";
+        };
+
+        let text = escapeHtml(value || "");
+        text = text.replace(/\`([^\`]+)\`/g, (_, content) => stash("<code>" + content + "</code>"));
+        text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+        text = text.replace(/\*\*([^*]+)\*\*/g, (_, content) => stash("<strong>" + content + "</strong>"));
+        text = text.replace(/__([^_]+)__/g, (_, content) => stash("<strong>" + content + "</strong>"));
+        text = text.replace(/\*([^*\n]+)\*/g, (_, content) => stash("<em>" + content + "</em>"));
+        text = text.replace(/_([^_\n]+)_/g, (_, content) => stash("<em>" + content + "</em>"));
+
+        return text.replace(/@@INLINE_TOKEN_(\d+)@@/g, (_, index) => {
+          return placeholders[Number(index)] || "";
+        });
       }
 
       function renderMarkdown(value) {
@@ -988,6 +1015,33 @@ export class ExplanationPanel implements vscode.Disposable {
         });
       }
 
+      function bindLazyChildren(details, renderChildren) {
+        const children = document.createElement("div");
+        children.className = "tree-children";
+        let isRendered = false;
+        const ensureRendered = () => {
+          if (isRendered) {
+            return;
+          }
+
+          isRendered = true;
+          renderChildren(children);
+        };
+
+        if (details.open) {
+          ensureRendered();
+        }
+
+        details.addEventListener("toggle", () => {
+          if (details.open) {
+            ensureRendered();
+          }
+        });
+
+        details.appendChild(children);
+        return children;
+      }
+
       function buildWordbookTree(entries) {
         const root = {
           groups: [],
@@ -1099,18 +1153,16 @@ export class ExplanationPanel implements vscode.Disposable {
         summary.appendChild(meta);
         details.appendChild(summary);
 
-        const children = document.createElement("div");
-        children.className = "tree-children";
+        bindLazyChildren(details, (children) => {
+          for (const childGroup of group.groups) {
+            children.appendChild(renderWordbookGroup(childGroup, fileKey, layerKey, nextPath));
+          }
 
-        for (const childGroup of group.groups) {
-          children.appendChild(renderWordbookGroup(childGroup, fileKey, layerKey, nextPath));
-        }
+          for (const entry of group.terms) {
+            children.appendChild(renderWordbookEntry(entry, fileKey, layerKey, nextPath));
+          }
+        });
 
-        for (const entry of group.terms) {
-          children.appendChild(renderWordbookEntry(entry, fileKey, layerKey, nextPath));
-        }
-
-        details.appendChild(children);
         return details;
       }
 
@@ -1136,18 +1188,16 @@ export class ExplanationPanel implements vscode.Disposable {
         details.appendChild(summary);
 
         const tree = buildWordbookTree(layer.entries);
-        const children = document.createElement("div");
-        children.className = "tree-children";
+        bindLazyChildren(details, (children) => {
+          for (const group of tree.groups) {
+            children.appendChild(renderWordbookGroup(group, fileKey, layer.key, []));
+          }
 
-        for (const group of tree.groups) {
-          children.appendChild(renderWordbookGroup(group, fileKey, layer.key, []));
-        }
+          for (const entry of tree.terms) {
+            children.appendChild(renderWordbookEntry(entry, fileKey, layer.key, []));
+          }
+        });
 
-        for (const entry of tree.terms) {
-          children.appendChild(renderWordbookEntry(entry, fileKey, layer.key, []));
-        }
-
-        details.appendChild(children);
         return details;
       }
 
@@ -1165,6 +1215,12 @@ export class ExplanationPanel implements vscode.Disposable {
             label: payload?.currentFunctionScope
               ? "Current function: " + payload.currentFunctionScope.replace(/^function\s+/, "")
               : "Current function"
+          },
+          {
+            value: "nearSelection",
+            label: payload?.currentSelectionLine
+              ? "Near selection (line " + payload.currentSelectionLine + ")"
+              : "Near selection"
           }
         ];
         wordbookScopeFilter.innerHTML = "";
@@ -1222,6 +1278,20 @@ export class ExplanationPanel implements vscode.Disposable {
             return entry.scopePath.includes(payload.currentFunctionScope);
           });
           emptyMessage = "No wordbook entries were found inside the current function.";
+        }
+
+        if (filterValue === "nearSelection") {
+          if (!payload?.currentSelectionLine) {
+            return {
+              entries: [],
+              emptyMessage: "Current selection line is not available for nearby filtering."
+            };
+          }
+
+          filteredEntries = filteredEntries.filter((entry) => {
+            return Math.abs((entry.sourceLine || 0) - payload.currentSelectionLine) <= 24;
+          });
+          emptyMessage = "No wordbook entries were found near the current selection.";
         }
 
         return {
@@ -1444,25 +1514,29 @@ export class ExplanationPanel implements vscode.Disposable {
         setActivePage("wordbook");
       });
 
-      wordbookSearchInput.addEventListener("input", () => {
-        const fileKey = getWordbookFileKey(latestPayload);
-        persistedViewState.wordbookSearchByFile[fileKey] = wordbookSearchInput.value;
-        persistViewState();
+      if (wordbookSearchInput) {
+        wordbookSearchInput.addEventListener("input", () => {
+          const fileKey = getWordbookFileKey(latestPayload);
+          persistedViewState.wordbookSearchByFile[fileKey] = wordbookSearchInput.value;
+          persistViewState();
 
-        if (latestPayload) {
-          renderWordbook(latestPayload.wordbookEntries || [], latestPayload);
-        }
-      });
+          if (latestPayload) {
+            renderWordbook(latestPayload.wordbookEntries || [], latestPayload);
+          }
+        });
+      }
 
-      wordbookScopeFilter.addEventListener("change", () => {
-        const fileKey = getWordbookFileKey(latestPayload);
-        persistedViewState.wordbookFilterByFile[fileKey] = wordbookScopeFilter.value;
-        persistViewState();
+      if (wordbookScopeFilter) {
+        wordbookScopeFilter.addEventListener("change", () => {
+          const fileKey = getWordbookFileKey(latestPayload);
+          persistedViewState.wordbookFilterByFile[fileKey] = wordbookScopeFilter.value;
+          persistViewState();
 
-        if (latestPayload) {
-          renderWordbook(latestPayload.wordbookEntries || [], latestPayload);
-        }
-      });
+          if (latestPayload) {
+            renderWordbook(latestPayload.wordbookEntries || [], latestPayload);
+          }
+        });
+      }
 
       reasoningEffortSelect.addEventListener("change", () => {
         vscode.postMessage({

@@ -22,7 +22,10 @@ import { generatePreprocessAudiencePrompt } from "../prompts/globalPromptProfile
 import { ExplanationProvider } from "../providers/providerTypes";
 import { WorkspaceStore } from "../storage/workspaceStore";
 import { createContentHash } from "../utils/hash";
-import { PreprocessStore } from "./preprocessStore";
+import {
+  PreprocessStore,
+  PREPROCESS_CACHE_BUILDER_VERSION
+} from "./preprocessStore";
 
 const PREPROCESS_CHUNK_SIZE = 20;
 
@@ -106,12 +109,15 @@ export async function buildSymbolPreprocessCache(
     candidatePool,
     sourceHash
   );
-  const existingCache = await preprocessStore.read(options.relativeFilePath);
+  const rawExistingCache = await preprocessStore.read(options.relativeFilePath);
+  const existingCache = preprocessStore.isCurrent(rawExistingCache, sourceHash)
+    ? rawExistingCache
+    : undefined;
   const selectedCandidateTerms = new Set(
     selectedCandidates.map((candidate) => candidate.normalizedTerm)
   );
   const cachedEntries =
-    existingCache && existingCache.sourceHash === sourceHash
+    existingCache
       ? existingCache.entries.filter(
           (entry) =>
             selectedCandidateTerms.has(entry.normalizedTerm) &&
@@ -127,6 +133,7 @@ export async function buildSymbolPreprocessCache(
       languageId: options.languageId,
       relativeFilePath: options.relativeFilePath,
       sourceHash,
+      builderVersion: PREPROCESS_CACHE_BUILDER_VERSION,
       generatedAt: new Date().toISOString(),
       entries: []
     };
@@ -157,7 +164,6 @@ export async function buildSymbolPreprocessCache(
 
     if (
       !existingCache ||
-      existingCache.sourceHash !== sourceHash ||
       existingCache.entries.length !== normalizedCache.entries.length
     ) {
       await preprocessStore.write(options.relativeFilePath, normalizedCache);
@@ -579,6 +585,7 @@ function buildCacheFile(
     languageId: options.languageId,
     relativeFilePath: options.relativeFilePath,
     sourceHash,
+    builderVersion: PREPROCESS_CACHE_BUILDER_VERSION,
     generatedAt: new Date().toISOString(),
     entries
   };

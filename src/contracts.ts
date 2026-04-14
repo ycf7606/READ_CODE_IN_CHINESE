@@ -233,6 +233,7 @@ export interface PreprocessedSymbolCacheFile {
   languageId: string;
   relativeFilePath: string;
   sourceHash: string;
+  builderVersion?: number;
   generatedAt: string;
   entries: PreprocessedSymbolEntry[];
 }

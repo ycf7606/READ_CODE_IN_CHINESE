@@ -60,6 +60,8 @@ const CATEGORY_PRIORITY: Record<GlossaryCategory, number> = {
   label: 5
 };
 
+type ImportedAliasKind = "function" | "class" | "namespace";
+
 function buildMeaning(term: string, category: GlossaryCategory): string {
   const phrase = humanizeIdentifier(term) || term.toLowerCase();
 
@@ -212,14 +214,17 @@ function addImportEntries(
   map: Map<string, GlossaryEntry>,
   line: string,
   lineNumber: number,
-  languageId: string
+  languageId: string,
+  importedAliases: Map<string, ImportedAliasKind>
 ): void {
   for (const match of line.matchAll(/\bimport\s+([A-Za-z_][A-Za-z0-9_]*)\s+from\b/g)) {
     addEntry(map, match[1], "import", lineNumber, "external");
+    registerImportedAlias(importedAliases, match[1]);
   }
 
   for (const match of line.matchAll(/\bimport\s+\*\s+as\s+([A-Za-z_][A-Za-z0-9_]*)\b/g)) {
     addEntry(map, match[1], "import", lineNumber, "external");
+    registerImportedAlias(importedAliases, match[1], match[1], "namespace");
   }
 
   for (const match of line.matchAll(/\bimport\s*\{([^}]*)\}/g)) {
@@ -238,11 +243,21 @@ function addImportEntries(
 
       if (term) {
         addEntry(map, term, "import", lineNumber, "external");
+        registerImportedAlias(importedAliases, term, directMatch?.[1] ?? term);
       }
     }
   }
 
   if (languageId === "python") {
+    for (const match of line.matchAll(
+      /\bimport\s+([A-Za-z_][A-Za-z0-9_.]*)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?/g
+    )) {
+      const importedModule = match[1].split(".").pop() ?? match[1];
+      const alias = match[2] ?? importedModule;
+      addEntry(map, alias, "import", lineNumber, "external");
+      registerImportedAlias(importedAliases, alias, importedModule, "namespace");
+    }
+
     for (const match of line.matchAll(/\bfrom\s+[A-Za-z_][A-Za-z0-9_.]*\s+import\s+(.+)$/g)) {
       const clause = match[1];
 
@@ -259,9 +274,94 @@ function addImportEntries(
 
         if (term) {
           addEntry(map, term, "import", lineNumber, "external");
+          registerImportedAlias(importedAliases, term, directMatch?.[1] ?? term);
         }
       }
     }
+  }
+}
+
+function registerImportedAlias(
+  importedAliases: Map<string, ImportedAliasKind>,
+  localName: string,
+  originalName?: string,
+  kind: ImportedAliasKind = "function"
+): void {
+  importedAliases.set(
+    localName.toLowerCase(),
+    kind === "namespace"
+      ? "namespace"
+      : /^[A-Z]/.test(originalName ?? localName)
+        ? "class"
+        : "function"
+  );
+}
+
+function addImportedAliasUsageEntries(
+  map: Map<string, GlossaryEntry>,
+  line: string,
+  lineNumber: number,
+  importedAliases: Map<string, ImportedAliasKind>
+): void {
+  for (const match of line.matchAll(/\bnew\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
+    const term = match[1];
+
+    if (importedAliases.has(term.toLowerCase())) {
+      addEntry(map, term, "class", lineNumber, "external");
+    }
+  }
+
+  for (const match of line.matchAll(/(?:^|[^.\w])([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
+    const term = match[1];
+    const aliasKind = importedAliases.get(term.toLowerCase());
+
+    if (!aliasKind || aliasKind === "namespace") {
+      continue;
+    }
+
+    addEntry(map, term, aliasKind === "class" ? "class" : "function", lineNumber, "external");
+  }
+}
+
+function addDecoratorEntries(
+  map: Map<string, GlossaryEntry>,
+  line: string,
+  lineNumber: number,
+  importedAliases: Map<string, ImportedAliasKind>
+): void {
+  const decoratorMatch =
+    /^\s*@((?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*)/.exec(line);
+
+  if (!decoratorMatch) {
+    return;
+  }
+
+  const fullDecoratorName = decoratorMatch[1];
+  const segments = fullDecoratorName.split(".");
+  const rootSegment = segments[0];
+  const finalSegment = segments[segments.length - 1];
+
+  if (segments.length > 1 || importedAliases.has(rootSegment.toLowerCase())) {
+    addEntry(
+      map,
+      finalSegment,
+      /^[A-Z]/.test(finalSegment) ? "class" : "function",
+      lineNumber,
+      "external"
+    );
+    return;
+  }
+
+  const aliasKind = importedAliases.get(finalSegment.toLowerCase());
+
+  if (aliasKind) {
+    addEntry(
+      map,
+      finalSegment,
+      aliasKind === "class" ? "class" : "function",
+      lineNumber,
+      "external"
+    );
   }
 }
 
@@ -271,6 +371,7 @@ export function extractGlossaryEntries(
   maxEntries = 60
 ): GlossaryEntry[] {
   const glossaryMap = new Map<string, GlossaryEntry>();
+  const importedAliases = new Map<string, ImportedAliasKind>();
   const lines = sourceCode.split(/\r?\n/);
 
   for (const [index, line] of lines.entries()) {
@@ -289,7 +390,9 @@ export function extractGlossaryEntries(
     }
 
     addMemberFunctionEntries(glossaryMap, line, lineNumber);
+    addDecoratorEntries(glossaryMap, line, lineNumber, importedAliases);
     addQualifiedCallEntries(glossaryMap, line, lineNumber);
+    addImportedAliasUsageEntries(glossaryMap, line, lineNumber, importedAliases);
 
     for (const match of line.matchAll(
       /\b(?:class|interface|type|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/g
@@ -305,7 +408,7 @@ export function extractGlossaryEntries(
       addEntry(glossaryMap, match[1], category, lineNumber, "local");
     }
 
-    addImportEntries(glossaryMap, line, lineNumber, languageId);
+    addImportEntries(glossaryMap, line, lineNumber, languageId, importedAliases);
 
     for (const match of line.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)) {
       addEntry(glossaryMap, match[1], "constant", lineNumber, "local");

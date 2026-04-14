@@ -1,7 +1,13 @@
 # Changelog
 
-## Unreleased - 2026-04-14
+## Unreleased - 2026-04-15
 
+- Hardened the explanation-panel webview script so runtime failures no longer silently disable button bindings and panel initialization
+- Added panel-side script error reporting back into the extension logger
+- Added `builderVersion` invalidation for preprocess caches so stale wordbook data is ignored after structural upgrades
+- Added TypeScript AST-backed external symbol extraction for aliased imports, decorators, chained external calls, and imported constructors
+- Expanded Python external symbol extraction for aliased imports, decorators, and direct imported-alias calls
+- Added lazy wordbook tree hydration plus a `Near selection` filter to reduce large-file rendering overhead
 - Added a hybrid glossary builder that merges regex extraction with VS Code document symbols, and invalidates old glossary caches with a builder version
 - Split the wordbook into `File Symbols` and `Library / API Symbols` layers
 - Added wordbook term search plus `current class` / `current function` filtering in the webview

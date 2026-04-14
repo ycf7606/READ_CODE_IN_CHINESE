@@ -8,6 +8,7 @@ import {
   mergeGlossaryWithUserOverrides
 } from "./analysis/glossary";
 import { loadDocumentStructureFromLsp } from "./analysis/documentSymbols";
+import { extractTypeScriptAstGlossaryEntries } from "./analysis/typeScriptAstGlossary";
 import {
   attachWordbookScopePaths,
   collectScopeRegions,
@@ -36,7 +37,9 @@ import {
 } from "./contracts";
 import { syncOfficialDocsForLanguage } from "./knowledge/officialDocs";
 import { KnowledgeStore } from "./knowledge/knowledgeStore";
-import { PreprocessStore } from "./knowledge/preprocessStore";
+import {
+  PreprocessStore
+} from "./knowledge/preprocessStore";
 import {
   buildCachedPreprocessExplanation,
   buildSymbolPreprocessCache
@@ -125,6 +128,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (message.type === "setReasoningEffort") {
       await persistConfigurationValue("provider.reasoningEffort", message.reasoningEffort);
+      return;
+    }
+
+    if (message.type === "panelScriptError") {
+      logger.error("Explanation panel script error", message.error);
+      panel.setState({
+        statusMessage: `Panel UI error: ${message.error}`
+      });
       return;
     }
 
@@ -1445,7 +1456,7 @@ export function activate(context: vscode.ExtensionContext): void {
     await ensureScopeRegions(editor.document, projectContext.relativeFilePath, sourceHash);
     const cacheFile = await preprocessStore.read(projectContext.relativeFilePath);
 
-    if (cacheFile && cacheFile.sourceHash === sourceHash) {
+    if (preprocessStore.isCurrent(cacheFile, sourceHash)) {
       const sanitizedEntries = sanitizeWordbookEntries(cacheFile.entries);
 
       if (sanitizedEntries.length !== cacheFile.entries.length) {
@@ -1490,6 +1501,7 @@ export function activate(context: vscode.ExtensionContext): void {
       currentFile: projectContext?.relativeFilePath ?? sourceEditor?.document.fileName,
       currentSelectionLabel: sourceEditor ? formatSelectionLabel(sourceEditor.selection) : undefined,
       currentSelectionText: readSelectionText(sourceEditor),
+      currentSelectionLine: selectionLine > 0 ? selectionLine : undefined,
       currentGranularity,
       currentClassScope: selectionContext?.currentClassScope,
       currentFunctionScope: selectionContext?.currentFunctionScope,
@@ -1861,7 +1873,12 @@ async function getOrCreateGlossary(
     cachedBuilderVersion: existingCache?.builderVersion ?? 0
   });
 
-  const regexEntries = extractGlossaryEntries(document.getText(), document.languageId);
+  const sourceText = document.getText();
+  const regexEntries = extractGlossaryEntries(sourceText, document.languageId);
+  const typeScriptAstEntries = extractTypeScriptAstGlossaryEntries(
+    sourceText,
+    document.languageId
+  );
   let lspEntries: GlossaryEntry[] = [];
 
   try {
@@ -1878,7 +1895,11 @@ async function getOrCreateGlossary(
     });
   }
 
-  const generatedEntries = mergeGeneratedGlossaryEntries(regexEntries, lspEntries);
+  const generatedEntries = mergeGeneratedGlossaryEntries(
+    regexEntries,
+    typeScriptAstEntries,
+    lspEntries
+  );
   const mergedEntries = mergeGlossaryWithUserOverrides(
     generatedEntries,
     existingCache?.entries ?? []
