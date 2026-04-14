@@ -76,6 +76,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   logger.info("Extension activated");
+  logger.info("Effective settings", summarizeSettings(getSettings()));
 
   const registeredCommands = [
     vscode.commands.registerCommand(
@@ -161,6 +162,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(CONFIG_NAMESPACE)) {
         logger.info("Configuration changed");
+        logger.info("Effective settings", summarizeSettings(getSettings()));
         updateStatusBar(statusBarItem);
         syncPanelContext(vscode.window.activeTextEditor);
       }
@@ -1123,4 +1125,19 @@ function hasNonEmptySelection(editor: vscode.TextEditor | undefined): boolean {
       !editor.selection.isEmpty &&
       editor.document.getText(editor.selection).trim()
   );
+}
+
+function summarizeSettings(settings: ReturnType<typeof getSettings>) {
+  return {
+    providerId: settings.providerId,
+    providerBaseUrl: settings.providerBaseUrl || "(empty)",
+    providerModel: settings.providerModel || "(empty)",
+    providerApiKeyEnvVar: settings.providerApiKeyEnvVar,
+    hasApiKey: Boolean(process.env[settings.providerApiKeyEnvVar]),
+    detailLevel: settings.detailLevel,
+    professionalLevel: settings.professionalLevel,
+    sections: settings.sections,
+    autoExplainEnabled: settings.autoExplainEnabled,
+    autoOpenPanel: settings.autoOpenPanel
+  };
 }

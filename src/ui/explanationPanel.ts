@@ -307,7 +307,8 @@ export class ExplanationPanel implements vscode.Disposable {
       <section class="card">
         <div class="card-body stack">
           <div>
-            <div class="label">Summary</div>
+          <div class="label">Summary</div>
+            <div id="engineInfo" class="meta"></div>
             <div id="summary" class="summary empty">Select code and start an explanation.</div>
           </div>
           <div>
@@ -347,6 +348,7 @@ export class ExplanationPanel implements vscode.Disposable {
       const watchBadge = document.getElementById("watchBadge");
       const meta = document.getElementById("meta");
       const summary = document.getElementById("summary");
+      const engineInfo = document.getElementById("engineInfo");
       const sections = document.getElementById("sections");
       const suggestions = document.getElementById("suggestions");
       const glossary = document.getElementById("glossary");
@@ -438,6 +440,12 @@ export class ExplanationPanel implements vscode.Disposable {
           ? explanation.summary
           : "Select code and start an explanation.";
         summary.className = explanation ? "summary" : "summary empty";
+
+        const engineLines = [
+          explanation?.source ? "Engine: " + explanation.source : "",
+          explanation?.note ? "Note: " + explanation.note : ""
+        ].filter(Boolean);
+        engineInfo.innerHTML = engineLines.map((line) => '<div>' + line + '</div>').join("");
 
         sections.innerHTML = "";
         if (explanation?.sections?.length) {

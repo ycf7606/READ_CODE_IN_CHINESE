@@ -2,7 +2,7 @@
   "name": "read-code-in-chinese",
   "displayName": "Read Code In Chinese",
   "description": "VS Code extension for turning source code into concise Chinese explanations.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "ycf7606",
   "license": "MPL-2.0",
   "repository": {

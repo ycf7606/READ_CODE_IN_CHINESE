@@ -14,8 +14,24 @@ export function createProvider(
     Boolean(settings.providerModel);
 
   if (hasRemoteConfig) {
+    logger?.info("Provider selected", {
+      providerId: "openai-compatible",
+      model: settings.providerModel,
+      baseUrl: settings.providerBaseUrl,
+      apiKeyEnvVar: settings.providerApiKeyEnvVar,
+      hasApiKey: Boolean(process.env[settings.providerApiKeyEnvVar])
+    });
     return new OpenAICompatibleProvider(settings, logger);
   }
+
+  logger?.info("Provider selected", {
+    providerId: "local",
+    requestedProviderId: settings.providerId,
+    hasBaseUrl: Boolean(settings.providerBaseUrl),
+    hasModel: Boolean(settings.providerModel),
+    apiKeyEnvVar: settings.providerApiKeyEnvVar,
+    hasApiKey: Boolean(process.env[settings.providerApiKeyEnvVar])
+  });
 
   return new LocalExplanationProvider(logger);
 }

@@ -250,3 +250,50 @@
   - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-8.md`
 - Verification:
   - Manual review of the updated context files
+
+### S9-01 Fix provider resolution for development-host testing
+
+- Stage: 9
+- Result: Changed settings resolution to prefer explicit VS Code configuration but fall back to environment defaults when the current workspace has no explicit provider settings.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\config.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\.vscode\.env`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S9-02 Add clearer engine diagnostics
+
+- Stage: 9
+- Result: Logged effective settings and provider selection, and surfaced engine source and fallback notes directly inside the explanation panel.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\extension.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\createProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\ui\explanationPanel.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S9-03 Repair fallback follow-up text corruption
+
+- Stage: 9
+- Result: Rewrote local follow-up answers and remote suggested follow-up strings to remove corrupted text and make fallback behavior explicit.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\localProvider.ts`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\src\providers\openAICompatibleProvider.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S9-04 Update docs and publish the Stage 9 summary
+
+- Stage: 9
+- Result: Updated README, architecture notes, changelog, workboard, and added the Stage 9 summary describing the root cause and fix.
+- Files:
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-9.md`
+- Verification:
+  - Manual review of the updated context files

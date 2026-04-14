@@ -56,14 +56,15 @@ The extension is designed to make source code easier to read by combining:
 
 1. User selects code or runs a file/workspace command
 2. Extension loads settings, logger, and workspace services
-3. If the panel is open, selection changes automatically trigger explanation refresh
-4. Glossary cache is loaded or regenerated
-5. Knowledge snippets are retrieved from imported or synced documents
-6. Explanation request is built with user goal, custom prompt instructions, and provider hyperparameters
-7. Local or remote provider returns a structured explanation
-8. Panel, glossary UI, and status metadata update
-9. User may ask a follow-up question in the same panel
-10. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
+3. Settings resolution prefers explicit VS Code configuration, then falls back to environment variables for development-host testing
+4. If the panel is open, selection changes automatically trigger explanation refresh
+5. Glossary cache is loaded or regenerated
+6. Knowledge snippets are retrieved from imported or synced documents
+7. Explanation request is built with user goal, custom prompt instructions, and provider hyperparameters
+8. Local or remote provider returns a structured explanation
+9. Panel, glossary UI, and status metadata update
+10. User may ask a follow-up question in the same panel
+11. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 

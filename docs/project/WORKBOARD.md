@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 8
-- Latest summary: `docs/project/summaries/2026-04-14-stage-8.md`
+- Latest completed milestone: Stage 9
+- Latest summary: `docs/project/summaries/2026-04-14-stage-9.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -33,6 +33,7 @@ Every future work session must read these files in order before making changes:
 | 6 | Knowledge augmentation | Completed | Local knowledge import and retrieval attachment |
 | 7 | Open-source polish | Completed | Docs, tests, CI, and packaging polish |
 | 8 | Runtime polish and market-readiness | Completed | Logging, official docs sync, cleaner panel UX, prompt controls, and real API validation |
+| 9 | Provider reliability fix | Completed | Env-based provider resolution, clearer diagnostics, and local fallback repair |
 
 ## Completed Tasks
 
@@ -78,6 +79,11 @@ Every future work session must read these files in order before making changes:
 - [x] S8-04 Add custom prompt instructions and remote hyperparameter controls.
 - [x] S8-05 Validate the remote provider and official docs sync with real network smoke tests.
 - [x] S8-06 Produce the Stage 8 summary file.
+- [x] S9-01 Fix settings resolution so env defaults work in the Extension Development Host.
+- [x] S9-02 Surface actual engine source and fallback notes more clearly in the panel and logs.
+- [x] S9-03 Repair local and remote follow-up text corruption.
+- [x] S9-04 Update local dev env defaults for real provider testing across workspaces.
+- [x] S9-05 Produce the Stage 9 summary file.
 
 ## Current Todo
 
@@ -94,6 +100,7 @@ Every future work session must read these files in order before making changes:
 ## Notes
 
 - The core extension workflow is implemented end-to-end and validated by compile, unit tests, remote provider smoke tests, and official docs sync smoke tests.
+- A Stage 9 fix closed the gap where VS Code schema defaults could hide env-based provider settings during development-host testing.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

@@ -198,10 +198,13 @@ npm.cmd test
 1. Open this repository in VS Code.
 2. Run `npm.cmd install`.
 3. Run `npm.cmd run compile`.
-4. Put your API key into `.vscode/.env` if you want to test the remote provider locally.
+4. Put your provider settings into `.vscode/.env` if you want to test the remote provider locally.
 5. Press `F5` to start the Extension Development Host.
 6. Open the command palette and run `Read Code In Chinese: Open Conversation Panel`.
 7. Keep the panel open and select code to verify automatic explanation updates.
+8. If the panel still shows `Engine: local`, run `Read Code In Chinese: Show Logs` and check the effective provider settings written at activation time.
+
+The development host can now take provider defaults from environment variables, so testing against another workspace does not require copying provider settings into that target workspace.
 
 ## Architecture
 

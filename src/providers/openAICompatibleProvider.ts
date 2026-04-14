@@ -1,4 +1,4 @@
-import {
+﻿import {
   ChatTurn,
   ExplanationRequest,
   ExplanationResponse,
@@ -20,11 +20,20 @@ interface ChatCompletionMessage {
 }
 
 interface ChatCompletionChoice {
+  text?: string;
   message?: {
-    content?: string | Array<{
-      type?: string;
-      text?: string;
-    }>;
+    content?:
+      | string
+      | Array<{
+          type?: string;
+          text?: string;
+          value?: string;
+        }>
+      | {
+          text?: string;
+          value?: string;
+        };
+    reasoning_content?: string | null;
   };
 }
 
@@ -173,6 +182,10 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
       const content = extractMessageContent(payload.choices?.[0]);
 
       if (!content) {
+        this.logger?.warn("Remote provider returned a choice without message content", {
+          mode,
+          payloadPreview: JSON.stringify(payload).slice(0, 500)
+        });
         throw new Error("Remote provider did not return a message content.");
       }
 
@@ -302,17 +315,48 @@ function readStringValue(value: unknown, fallback: string): string {
 }
 
 function extractMessageContent(choice: ChatCompletionChoice | undefined): string | undefined {
+  if (typeof choice?.text === "string" && choice.text.trim()) {
+    return choice.text.trim();
+  }
+
   const content = choice?.message?.content;
 
   if (typeof content === "string") {
     return content;
   }
 
+  if (content && typeof content === "object" && !Array.isArray(content)) {
+    const text =
+      typeof content.text === "string"
+        ? content.text
+        : typeof content.value === "string"
+          ? content.value
+          : "";
+
+    if (text.trim()) {
+      return text.trim();
+    }
+  }
+
   if (Array.isArray(content)) {
     return content
-      .map((entry) => (entry?.type === "text" && entry.text ? entry.text : ""))
+      .map((entry) => {
+        if (typeof entry?.text === "string" && entry.text) {
+          return entry.text;
+        }
+
+        if (typeof entry?.value === "string" && entry.value) {
+          return entry.value;
+        }
+
+        return "";
+      })
       .join("")
       .trim();
+  }
+
+  if (typeof choice?.message?.reasoning_content === "string") {
+    return choice.message.reasoning_content.trim();
   }
 
   return undefined;
@@ -329,3 +373,4 @@ async function safeReadText(response: Response): Promise<string> {
 function shortenWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 240);
 }
+

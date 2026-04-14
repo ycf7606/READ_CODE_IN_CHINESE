@@ -10,36 +10,170 @@ export const CONFIG_NAMESPACE = "readCodeInChinese";
 
 export function getSettings(): ExtensionSettings {
   const configuration = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+  const inferredProviderId =
+    readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_ID") ??
+    (readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_BASE_URL") &&
+    readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_MODEL")
+      ? "openai-compatible"
+      : "local");
+  const defaultSections =
+    readStringArrayEnv("READ_CODE_IN_CHINESE_EXPLANATION_SECTIONS") ?? [
+      "summary",
+      "usage"
+    ];
 
   return {
-    autoExplainEnabled: configuration.get<boolean>("autoExplain.enabled", false),
-    autoExplainDelayMs: configuration.get<number>("autoExplain.delayMs", 600),
-    autoOpenPanel: configuration.get<boolean>("ui.autoOpenPanel", true),
-    providerId: configuration.get<string>("provider.id", "local"),
-    providerBaseUrl: configuration.get<string>("provider.baseUrl", ""),
-    providerModel: configuration.get<string>("provider.model", ""),
-    providerApiKeyEnvVar: configuration.get<string>(
+    autoExplainEnabled: getConfiguredValue<boolean>(
+      configuration,
+      "autoExplain.enabled",
+      readBooleanEnv("READ_CODE_IN_CHINESE_AUTO_EXPLAIN_ENABLED") ?? false
+    ),
+    autoExplainDelayMs: getConfiguredValue<number>(
+      configuration,
+      "autoExplain.delayMs",
+      readNumberEnv("READ_CODE_IN_CHINESE_AUTO_EXPLAIN_DELAY_MS") ?? 600
+    ),
+    autoOpenPanel: getConfiguredValue<boolean>(
+      configuration,
+      "ui.autoOpenPanel",
+      readBooleanEnv("READ_CODE_IN_CHINESE_UI_AUTO_OPEN_PANEL") ?? true
+    ),
+    providerId: getConfiguredValue<string>(
+      configuration,
+      "provider.id",
+      inferredProviderId
+    ),
+    providerBaseUrl: getConfiguredValue<string>(
+      configuration,
+      "provider.baseUrl",
+      readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_BASE_URL") ?? ""
+    ),
+    providerModel: getConfiguredValue<string>(
+      configuration,
+      "provider.model",
+      readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_MODEL") ?? ""
+    ),
+    providerApiKeyEnvVar: getConfiguredValue<string>(
+      configuration,
       "provider.apiKeyEnvVar",
-      "READ_CODE_IN_CHINESE_API_KEY"
+      readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_API_KEY_ENV_VAR") ??
+        "READ_CODE_IN_CHINESE_API_KEY"
     ),
-    providerTimeoutMs: configuration.get<number>("provider.timeoutMs", 20000),
-    providerTemperature: configuration.get<number>("provider.temperature", 0.2),
-    providerTopP: configuration.get<number>("provider.topP", 1),
-    providerMaxTokens: configuration.get<number>("provider.maxTokens", 1200),
-    detailLevel: configuration.get<DetailLevel>(
+    providerTimeoutMs: getConfiguredValue<number>(
+      configuration,
+      "provider.timeoutMs",
+      readNumberEnv("READ_CODE_IN_CHINESE_PROVIDER_TIMEOUT_MS") ?? 20000
+    ),
+    providerTemperature: getConfiguredValue<number>(
+      configuration,
+      "provider.temperature",
+      readNumberEnv("READ_CODE_IN_CHINESE_PROVIDER_TEMPERATURE") ?? 0.2
+    ),
+    providerTopP: getConfiguredValue<number>(
+      configuration,
+      "provider.topP",
+      readNumberEnv("READ_CODE_IN_CHINESE_PROVIDER_TOP_P") ?? 1
+    ),
+    providerMaxTokens: getConfiguredValue<number>(
+      configuration,
+      "provider.maxTokens",
+      readNumberEnv("READ_CODE_IN_CHINESE_PROVIDER_MAX_TOKENS") ?? 1200
+    ),
+    detailLevel: getConfiguredValue<DetailLevel>(
+      configuration,
       "explanation.detailLevel",
-      "balanced"
+      (readStringEnv("READ_CODE_IN_CHINESE_EXPLANATION_DETAIL_LEVEL") as DetailLevel) ??
+        "balanced"
     ),
-    professionalLevel: configuration.get<ProfessionalLevel>(
+    professionalLevel: getConfiguredValue<ProfessionalLevel>(
+      configuration,
       "explanation.professionalLevel",
-      "intermediate"
+      (readStringEnv(
+        "READ_CODE_IN_CHINESE_EXPLANATION_PROFESSIONAL_LEVEL"
+      ) as ProfessionalLevel) ?? "intermediate"
     ),
-    sections: configuration.get<ExplanationSectionName[]>(
+    sections: getConfiguredValue<ExplanationSectionName[]>(
+      configuration,
       "explanation.sections",
-      ["summary", "usage"]
+      defaultSections as ExplanationSectionName[]
     ),
-    userGoal: configuration.get<string>("explanation.userGoal", ""),
-    knowledgeTopK: configuration.get<number>("knowledge.topK", 3),
-    customInstructions: configuration.get<string>("prompt.customInstructions", "")
+    userGoal: getConfiguredValue<string>(
+      configuration,
+      "explanation.userGoal",
+      readStringEnv("READ_CODE_IN_CHINESE_EXPLANATION_USER_GOAL") ?? ""
+    ),
+    knowledgeTopK: getConfiguredValue<number>(
+      configuration,
+      "knowledge.topK",
+      readNumberEnv("READ_CODE_IN_CHINESE_KNOWLEDGE_TOP_K") ?? 3
+    ),
+    customInstructions: getConfiguredValue<string>(
+      configuration,
+      "prompt.customInstructions",
+      readStringEnv("READ_CODE_IN_CHINESE_PROMPT_CUSTOM_INSTRUCTIONS") ?? ""
+    )
   };
+}
+
+function getConfiguredValue<T>(
+  configuration: vscode.WorkspaceConfiguration,
+  key: string,
+  fallback: T
+): T {
+  const inspected = configuration.inspect<T>(key);
+  const configuredValue =
+    inspected?.workspaceFolderValue ??
+    inspected?.workspaceValue ??
+    inspected?.globalValue;
+
+  return configuredValue !== undefined ? configuredValue : fallback;
+}
+
+function readStringEnv(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
+function readNumberEnv(name: string): number | undefined {
+  const value = readStringEnv(name);
+
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function readBooleanEnv(name: string): boolean | undefined {
+  const value = readStringEnv(name)?.toLowerCase();
+
+  if (!value) {
+    return undefined;
+  }
+
+  if (value === "true" || value === "1" || value === "yes") {
+    return true;
+  }
+
+  if (value === "false" || value === "0" || value === "no") {
+    return false;
+  }
+
+  return undefined;
+}
+
+function readStringArrayEnv(name: string): string[] | undefined {
+  const value = readStringEnv(name);
+
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  return parsed.length ? parsed : undefined;
 }

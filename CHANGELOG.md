@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 - 2026-04-14
+
+- Fixed provider configuration resolution so environment defaults can drive the development host even when testing against another workspace
+- Added clearer provider selection diagnostics to the logs
+- Surfaced engine source and fallback notes directly inside the explanation panel
+- Repaired corrupted follow-up suggestion strings in both local and remote paths
+- Expanded the local ignored `.vscode/.env` template to include remote provider defaults
+
 ## 0.3.0 - 2026-04-14
 
 - Added a VS Code output channel logger and richer runtime diagnostics
