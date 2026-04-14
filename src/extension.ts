@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-import { buildPreprocessCandidates } from "./analysis/preprocess";
+import { buildPreprocessCandidatePool } from "./analysis/preprocess";
 import { extractGlossaryEntries, mergeGlossaryWithUserOverrides } from "./analysis/glossary";
 import {
   createWorkspaceFileSummary,
@@ -465,7 +465,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ...(sessionState.preprocessProgress ?? {
           totalCandidates: 0,
           processedCandidates: 0,
-          totalSteps: 4,
+          totalSteps: 5,
           completedSteps: 0,
           batchCount: 0,
           startedAt: new Date().toISOString()
@@ -1405,22 +1405,18 @@ export function activate(context: vscode.ExtensionContext): void {
         false,
         logger
       );
-      const previewCandidates = buildPreprocessCandidates(
-        glossaryEntries,
-        getSettings().professionalLevel,
-        getSettings().occupation
-      );
+      const candidatePool = buildPreprocessCandidatePool(glossaryEntries);
 
       sessionState.preprocessProgress = {
         status: "running",
-        totalCandidates: previewCandidates.length,
+        totalCandidates: candidatePool.length,
         processedCandidates: 0,
-        totalSteps: 4,
+        totalSteps: 5,
         completedSteps: 1,
-        batchCount: previewCandidates.length > 0 ? 1 : 0,
+        batchCount: candidatePool.length > 0 ? 1 : 0,
         relativeFilePath: projectContext.relativeFilePath,
-        currentStep: "Selecting wordbook terms",
-        message: `Selected ${previewCandidates.length} symbols for the current audience profile.`,
+        currentStep: "Preparing candidate pool",
+        message: `Prepared ${candidatePool.length} preprocessable symbols for this file.`,
         startedAt: new Date().toISOString()
       };
       panel.setState({
@@ -1435,7 +1431,7 @@ export function activate(context: vscode.ExtensionContext): void {
         relativeFilePath: projectContext.relativeFilePath,
         settings: getSettings(),
         glossaryEntries,
-        candidates: previewCandidates,
+        candidatePool,
         workspaceStore: projectContext.workspaceStore,
         provider,
         logger,
@@ -1490,7 +1486,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ...(sessionState.preprocessProgress ?? {
           totalCandidates: 0,
           processedCandidates: 0,
-          totalSteps: 4,
+          totalSteps: 5,
           completedSteps: 0,
           batchCount: 0,
           startedAt: new Date().toISOString()

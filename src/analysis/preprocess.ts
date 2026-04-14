@@ -73,24 +73,22 @@ const COMMON_VARIABLE_TERMS = new Set([
   "tmp"
 ]);
 
-export function buildPreprocessCandidates(
-  glossaryEntries: GlossaryEntry[],
-  professionalLevel: ProfessionalLevel,
-  occupation: Occupation
+export function buildPreprocessCandidatePool(
+  glossaryEntries: GlossaryEntry[]
 ): PreprocessedSymbolCandidate[] {
-  const limit = getPreprocessCandidateLimit(professionalLevel, occupation);
-
   return glossaryEntries
-    .filter((entry) => isPreprocessCategory(entry.category))
-    .filter((entry) => entry.sourceLine && entry.sourceLine > 0)
-    .filter((entry) => keepCandidateForAudience(entry, professionalLevel, occupation))
+    .filter(
+      (entry): entry is GlossaryEntry & { category: PreprocessedSymbolCategory } =>
+        isPreprocessCategory(entry.category)
+    )
+    .filter((entry) => entry.sourceLine !== undefined && entry.sourceLine > 0)
     .map((entry) => ({
       term: entry.term,
       normalizedTerm: entry.normalizedTerm,
       category: entry.category as PreprocessedSymbolCategory,
       sourceLine: entry.sourceLine ?? 0,
       references: entry.references,
-      score: scoreCandidate(entry, occupation)
+      score: scoreCandidate(entry)
     }))
     .sort((left, right) => {
       return (
@@ -98,8 +96,31 @@ export function buildPreprocessCandidates(
         left.sourceLine - right.sourceLine ||
         left.term.localeCompare(right.term)
       );
-    })
+    });
+}
+
+export function selectPreprocessCandidatesFromPool(
+  candidatePool: PreprocessedSymbolCandidate[],
+  professionalLevel: ProfessionalLevel,
+  occupation: Occupation
+): PreprocessedSymbolCandidate[] {
+  const limit = getPreprocessCandidateLimit(professionalLevel, occupation);
+
+  return candidatePool
+    .filter((entry) => keepCandidateForAudience(entry, professionalLevel, occupation))
     .slice(0, limit);
+}
+
+export function buildPreprocessCandidates(
+  glossaryEntries: GlossaryEntry[],
+  professionalLevel: ProfessionalLevel,
+  occupation: Occupation
+): PreprocessedSymbolCandidate[] {
+  return selectPreprocessCandidatesFromPool(
+    buildPreprocessCandidatePool(glossaryEntries),
+    professionalLevel,
+    occupation
+  );
 }
 
 export function getPreprocessCandidateLimit(
@@ -125,7 +146,7 @@ function isPreprocessCategory(
 }
 
 function keepCandidateForAudience(
-  entry: GlossaryEntry,
+  entry: PreprocessedSymbolCandidate,
   professionalLevel: ProfessionalLevel,
   occupation: Occupation
 ): boolean {
@@ -161,7 +182,7 @@ function keepCandidateForAudience(
 }
 
 function isTooCommonForAudience(
-  entry: GlossaryEntry,
+  entry: PreprocessedSymbolCandidate,
   professionalLevel: ProfessionalLevel,
   occupation: Occupation
 ): boolean {
@@ -209,26 +230,13 @@ function isTooCommonForAudience(
   return false;
 }
 
-function scoreCandidate(entry: GlossaryEntry, occupation: Occupation): number {
-  const categoryWeight = isPreprocessCategory(entry.category)
-    ? CATEGORY_WEIGHT[entry.category]
-    : 0;
+function scoreCandidate(
+  entry: PreprocessedSymbolCandidate | (GlossaryEntry & { category: PreprocessedSymbolCategory })
+): number {
+  const categoryWeight = CATEGORY_WEIGHT[entry.category];
   const nameComplexityWeight = /[A-Z_]/.test(entry.term) ? 6 : 0;
   const labelShapeWeight = entry.category === "label" && /[-_]/.test(entry.term) ? 4 : 0;
   const sourceLineWeight = entry.sourceLine ? Math.max(0, 12 - Math.min(entry.sourceLine, 12)) : 0;
-  const occupationBoost =
-    occupation === "student" && (entry.category === "variable" || entry.category === "label")
-      ? 4
-      : occupation === "data-scientist" && (entry.category === "label" || entry.category === "type")
-        ? 4
-        : 0;
 
-  return (
-    categoryWeight +
-    entry.references * 6 +
-    nameComplexityWeight +
-    labelShapeWeight +
-    sourceLineWeight +
-    occupationBoost
-  );
+  return categoryWeight + entry.references * 6 + nameComplexityWeight + labelShapeWeight + sourceLineWeight;
 }

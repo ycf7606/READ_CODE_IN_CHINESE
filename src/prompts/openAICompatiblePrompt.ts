@@ -1,5 +1,6 @@
 import {
   ExplanationRequest,
+  PreprocessCandidateSelectionRequest,
   FollowUpRequest,
   SymbolPreprocessRequest
 } from "../contracts";
@@ -201,6 +202,48 @@ export function buildSymbolPreprocessPrompts(request: SymbolPreprocessRequest): 
       `Goal: ${request.userGoal || "Prepare quick symbol explanations for this file."}`,
       "",
       "Candidate symbols:",
+      candidateLines || "(none)",
+      "",
+      "Full file context:",
+      request.sourceCode
+    ].join("\n")
+  };
+}
+
+export function buildPreprocessCandidateSelectionPrompts(
+  request: PreprocessCandidateSelectionRequest
+): {
+  system: string;
+  user: string;
+} {
+  const candidateLines = request.candidatePool
+    .map(
+      (candidate) =>
+        `- ${candidate.term} | category=${candidate.category} | line=${candidate.sourceLine} | refs=${candidate.references} | score=${candidate.score}`
+    )
+    .join("\n");
+
+  return {
+    system: [
+      "You choose which file-local code symbols should enter a Chinese code-reading wordbook.",
+      "Respond with valid JSON only.",
+      'Use this exact shape: {"selectedTerms":["string"]}',
+      "Select only terms that are worth preprocessing for this audience.",
+      "Beginner users should get more guidance.",
+      "Intermediate users are the default medium audience and should skip obvious framework conventions and overly common symbols such as forward unless the file makes them unusually important.",
+      "Expert users should get a smaller list than intermediate users.",
+      "Only select terms that already exist in the candidate list.",
+      "Do not explain the terms here.",
+      "Do not add markdown or extra keys.",
+      request.customInstructions || ""
+    ].join(" "),
+    user: [
+      `Language: ${request.languageId}`,
+      `Occupation: ${request.occupation}`,
+      `Professional level: ${request.professionalLevel}`,
+      `Goal: ${request.userGoal || "Choose which symbols deserve a file-local wordbook entry."}`,
+      "",
+      "Candidate pool:",
       candidateLines || "(none)",
       "",
       "Full file context:",

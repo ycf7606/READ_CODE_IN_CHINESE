@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 15
-- Latest summary: `docs/project/summaries/2026-04-14-stage-15.md`
+- Latest completed milestone: Stage 16
+- Latest summary: `docs/project/summaries/2026-04-14-stage-16.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -40,6 +40,7 @@ Every future work session must read these files in order before making changes:
 | 13 | Dictionary UX and prompt generation | Completed | Visible file wordbook, remote prompt-profile generation, concise bullet rendering, and real provider validation |
 | 14 | Audience-aware wordbook preprocessing | Completed | Two-step candidate selection, label coverage, preprocess prompt isolation, and focus-safe watched updates |
 | 15 | Medium-default audience tuning | Completed | Stricter intermediate wordbook filtering and stronger occupation/profession-aware explanation prompts |
+| 16 | API-driven preprocess selection | Completed | Remote candidate selection, 5-step preprocess progress, and resilient local fallback |
 
 ## Completed Tasks
 
@@ -122,6 +123,10 @@ Every future work session must read these files in order before making changes:
 - [x] S15-02 Inject occupation and professional level directly into explanation requests and runtime prompts.
 - [x] S15-03 Add regression coverage and smoke validation for medium-default filtering and audience-aware prompt shaping.
 - [x] S15-04 Produce the Stage 15 summary file.
+- [x] S16-01 Add provider-side preprocess candidate selection contracts, prompts, and response normalization.
+- [x] S16-02 Route file preprocessing through a raw candidate pool plus remote candidate selection before batch wordbook generation.
+- [x] S16-03 Add regression coverage for remote selection normalization and the new 5-step preprocess flow.
+- [x] S16-04 Produce the Stage 16 summary file.
 
 ## Current Todo
 
@@ -145,6 +150,7 @@ Every future work session must read these files in order before making changes:
 - A Stage 13 update exposed the file preprocess cache as a visible wordbook, switched settings prompt generation to the remote provider when available, and tightened the UI around concise dictionary-style bullet output.
 - A Stage 14 update made preprocessing audience-aware, added label/string coverage, isolated the wordbook prompt from explanation sections, and reduced focus disruption while the panel watches selection changes.
 - A Stage 15 update tightened the default medium (`intermediate`) wordbook profile and made runtime explanation prompts explicitly audience-aware even without regenerating the editable prompt.
+- A Stage 16 update moved remote file-wordbook selection away from fixed local term lists and into a dedicated provider pass over the raw candidate pool, while preserving local fallback behavior.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

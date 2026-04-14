@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
-import { buildPreprocessCandidates } from "../analysis/preprocess";
+import { buildPreprocessCandidatePool, buildPreprocessCandidates } from "../analysis/preprocess";
 import { extractGlossaryEntries } from "../analysis/glossary";
 import {
   buildFileOverviewSummary,
@@ -244,6 +244,15 @@ test("symbol preprocess builder writes batch results into file cache", async () 
         latencyMs: 1
       };
     },
+    async selectPreprocessCandidates(request: { requestId: string; languageId: string }) {
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        selectedTerms: ["featureMap", "EmbeddingModel"],
+        source: "openai-compatible",
+        latencyMs: 8
+      };
+    },
     async preprocessSymbols(request: SymbolPreprocessRequest) {
       return {
         requestId: request.requestId,
@@ -301,9 +310,13 @@ test("symbol preprocess builder writes batch results into file cache", async () 
   const cached = await preprocessStore.read("src/example.ts");
 
   assert.ok(result);
-  assert.ok((cached?.entries.length ?? 0) >= 2);
+  assert.deepEqual(
+    result?.candidates.map((candidate) => candidate.term).sort(),
+    ["EmbeddingModel", "featureMap"]
+  );
+  assert.equal(cached?.entries.length ?? 0, 2);
   assert.ok(cached?.entries.some((entry) => entry.summary === "featureMap summary"));
-  assert.ok(progressSnapshots.includes("completed:4"));
+  assert.ok(progressSnapshots.includes("completed:5"));
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 
@@ -471,6 +484,91 @@ test("local prompt generator keeps dictionary-style guidance", async () => {
   assert.equal(response.source, "local");
   assert.match(response.prompt, /dictionary-like style/i);
   assert.match(response.prompt, /Understand model inference code/);
+});
+
+test("openai provider normalizes preprocess candidate selections", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.TEST_OPENAI_PROVIDER_KEY = "test-key";
+  const glossaryEntries = extractGlossaryEntries(
+    [
+      "const featureMap = buildFeatureMap(values);",
+      "function buildFeatureMap(input) { return input; }",
+      "class EmbeddingModel {}"
+    ].join("\n"),
+    "typescript"
+  );
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                selectedTerms: [
+                  "featureMap",
+                  "missingTerm",
+                  { term: "EmbeddingModel" },
+                  "featureMap"
+                ]
+              })
+            }
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    )) as unknown as typeof fetch;
+
+  try {
+    const provider = new OpenAICompatibleProvider({
+      autoExplainEnabled: false,
+      autoExplainDelayMs: 600,
+      autoOpenPanel: true,
+      providerId: "openai-compatible",
+      providerBaseUrl: "https://example.com/v1",
+      providerModel: "gpt-5.4",
+      providerApiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY",
+      providerTimeoutMs: 1000,
+      providerTemperature: 0.2,
+      providerTopP: 1,
+      providerMaxTokens: 1200,
+      providerReasoningEffort: "medium",
+      detailLevel: "balanced",
+      professionalLevel: "intermediate",
+      occupation: "developer",
+      sections: ["summary", "usage"],
+      userGoal: "",
+      knowledgeTopK: 3,
+      customInstructions: ""
+    });
+    const response = await provider.selectPreprocessCandidates!({
+      requestId: "remote-select",
+      languageId: "typescript",
+      filePath: "D:/workspace/src/example.ts",
+      relativeFilePath: "src/example.ts",
+      professionalLevel: "intermediate",
+      occupation: "developer",
+      sourceCode: [
+        "const featureMap = buildFeatureMap(values);",
+        "function buildFeatureMap(input) { return input; }",
+        "class EmbeddingModel {}"
+      ].join("\n"),
+      candidatePool: buildPreprocessCandidatePool(glossaryEntries),
+      userGoal: "",
+      customInstructions: ""
+    });
+
+    assert.equal(response.source, "openai-compatible");
+    assert.deepEqual(response.selectedTerms, ["featureMap", "EmbeddingModel"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.TEST_OPENAI_PROVIDER_KEY;
+  }
 });
 
 test("openai provider normalizes section items from remote json", async () => {

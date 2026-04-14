@@ -7,8 +7,11 @@
   FollowUpRequest,
   FollowUpResponse,
   GlossaryEntry,
+  PreprocessCandidateSelectionRequest,
+  PreprocessCandidateSelectionResponse,
   PromptProfileRequest,
   PromptProfileResponse,
+  PreprocessedSymbolCandidate,
   PreprocessedSymbolEntry,
   SymbolPreprocessRequest,
   SymbolPreprocessResponse
@@ -18,6 +21,7 @@ import { buildPromptProfileGenerationPrompts } from "../prompts/globalPromptProf
 import {
   buildExplainPrompts,
   buildFollowUpPrompts,
+  buildPreprocessCandidateSelectionPrompts,
   buildSymbolPreprocessPrompts
 } from "../prompts/openAICompatiblePrompt";
 import { ExplanationProvider, ProviderCallOptions } from "./providerTypes";
@@ -183,9 +187,56 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
     };
   }
 
+  async selectPreprocessCandidates(
+    request: PreprocessCandidateSelectionRequest,
+    options?: ProviderCallOptions
+  ): Promise<PreprocessCandidateSelectionResponse> {
+    const startedAt = Date.now();
+    const prompts = buildPreprocessCandidateSelectionPrompts(request);
+    const content = await this.createChatCompletion(
+      [
+        { role: "system", content: prompts.system },
+        { role: "user", content: prompts.user }
+      ],
+      "preprocess-select",
+      options?.signal
+    );
+    const parsedResponse = parseJsonResponse(content);
+
+    if (!("selectedTerms" in parsedResponse) && !("terms" in parsedResponse)) {
+      throw new Error("Remote provider did not return selectedTerms for preprocess selection.");
+    }
+
+    const selectedTerms = normalizeSelectedTerms(
+      parsedResponse.selectedTerms ?? parsedResponse.terms,
+      request.candidatePool
+    );
+
+    this.logger?.info("Remote provider selected preprocess candidates", {
+      requestId: request.requestId,
+      model: this.settings.providerModel,
+      candidatePoolSize: request.candidatePool.length,
+      selectedCount: selectedTerms.length
+    });
+
+    return {
+      requestId: request.requestId,
+      languageId: request.languageId,
+      selectedTerms,
+      source: this.id,
+      latencyMs: Date.now() - startedAt,
+      note: typeof parsedResponse.note === "string" ? parsedResponse.note : undefined
+    };
+  }
+
   private async createChatCompletion(
     messages: ChatCompletionMessage[],
-    mode: "explain" | "follow-up" | "preprocess" | "prompt-profile",
+    mode:
+      | "explain"
+      | "follow-up"
+      | "preprocess"
+      | "preprocess-select"
+      | "prompt-profile",
     signal?: AbortSignal
   ): Promise<string> {
     const apiKey = process.env[this.settings.providerApiKeyEnvVar];
@@ -280,7 +331,12 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
 function buildPayloadCandidates(
   settings: ExtensionSettings,
   messages: ChatCompletionMessage[],
-  mode: "explain" | "follow-up" | "preprocess" | "prompt-profile"
+  mode:
+    | "explain"
+    | "follow-up"
+    | "preprocess"
+    | "preprocess-select"
+    | "prompt-profile"
 ): Array<Record<string, unknown>> {
   const basePayload = {
     model: settings.providerModel,
@@ -313,6 +369,24 @@ function buildPayloadCandidates(
         ...basePayload,
         temperature: 0,
         max_tokens: Math.min(settings.providerMaxTokens, 1400),
+        response_format: { type: "json_object" }
+      }
+    ];
+  }
+
+  if (mode === "preprocess-select") {
+    return [
+      {
+        ...basePayload,
+        temperature: 0,
+        max_tokens: Math.min(settings.providerMaxTokens, 700),
+        reasoning_effort: "low",
+        response_format: { type: "json_object" }
+      },
+      {
+        ...basePayload,
+        temperature: 0,
+        max_tokens: Math.min(settings.providerMaxTokens, 700),
         response_format: { type: "json_object" }
       }
     ];
@@ -538,8 +612,60 @@ function normalizePreprocessEntries(
     .filter((entry): entry is PreprocessedSymbolEntry => Boolean(entry));
 }
 
+function normalizeSelectedTerms(
+  value: unknown,
+  candidatePool: PreprocessedSymbolCandidate[]
+): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const candidateMap = new Map(
+    candidatePool.map((candidate) => [candidate.normalizedTerm, candidate.term])
+  );
+  const selectedTerms: string[] = [];
+
+  for (const entry of value) {
+    const term = readSelectedTerm(entry);
+
+    if (!term) {
+      continue;
+    }
+
+    const matchedTerm = candidateMap.get(term.toLowerCase());
+
+    if (matchedTerm && !selectedTerms.includes(matchedTerm)) {
+      selectedTerms.push(matchedTerm);
+    }
+  }
+
+  return selectedTerms;
+}
+
 function readStringValue(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function readSelectedTerm(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const candidate = value as { term?: unknown; name?: unknown };
+
+  if (typeof candidate.term === "string" && candidate.term.trim()) {
+    return candidate.term.trim();
+  }
+
+  if (typeof candidate.name === "string" && candidate.name.trim()) {
+    return candidate.name.trim();
+  }
+
+  return undefined;
 }
 
 function extractMessageContent(choice: ChatCompletionChoice | undefined): string | undefined {

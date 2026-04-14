@@ -1,13 +1,18 @@
-import {
+﻿import {
   ExplanationRequest,
   ExplanationResponse,
   FollowUpRequest,
   FollowUpResponse,
+  PreprocessCandidateSelectionRequest,
+  PreprocessCandidateSelectionResponse,
   PromptProfileRequest,
   PromptProfileResponse,
   SymbolPreprocessRequest,
   SymbolPreprocessResponse
 } from "../contracts";
+import {
+  selectPreprocessCandidatesFromPool
+} from "../analysis/preprocess";
 import { ExtensionLogger } from "../logging/logger";
 import { generateGlobalPrompt } from "../prompts/globalPromptProfile";
 import {
@@ -96,7 +101,7 @@ export class LocalExplanationProvider implements ExplanationProvider {
       answerParts.push(`3. 相关术语可以先这样理解：${glossaryHints}`);
     }
 
-    answerParts.push("4. 当前回答来自本地兜底分析，不是远端模型推理。");
+    answerParts.push("4. 当前回答来自本地兜底分析，不是远端模型推理结果。");
 
     this.logger?.info("Local provider answered follow-up", {
       questionLength: request.question.length,
@@ -134,6 +139,26 @@ export class LocalExplanationProvider implements ExplanationProvider {
       })),
       source: this.id,
       latencyMs: Date.now() - startedAt
+    };
+  }
+
+  async selectPreprocessCandidates(
+    request: PreprocessCandidateSelectionRequest
+  ): Promise<PreprocessCandidateSelectionResponse> {
+    const startedAt = Date.now();
+    const selectedCandidates = selectPreprocessCandidatesFromPool(
+      request.candidatePool,
+      request.professionalLevel,
+      request.occupation
+    );
+
+    return {
+      requestId: request.requestId,
+      languageId: request.languageId,
+      selectedTerms: selectedCandidates.map((candidate) => candidate.term),
+      source: this.id,
+      latencyMs: Date.now() - startedAt,
+      note: "Used the local fallback selector because no remote model provider is configured."
     };
   }
 }

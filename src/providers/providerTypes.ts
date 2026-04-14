@@ -3,6 +3,8 @@ import {
   ExplanationResponse,
   FollowUpRequest,
   FollowUpResponse,
+  PreprocessCandidateSelectionRequest,
+  PreprocessCandidateSelectionResponse,
   PromptProfileRequest,
   PromptProfileResponse,
   SymbolPreprocessRequest,
@@ -27,6 +29,10 @@ export interface ExplanationProvider {
     request: SymbolPreprocessRequest,
     options?: ProviderCallOptions
   ): Promise<SymbolPreprocessResponse>;
+  selectPreprocessCandidates?(
+    request: PreprocessCandidateSelectionRequest,
+    options?: ProviderCallOptions
+  ): Promise<PreprocessCandidateSelectionResponse>;
   generatePromptProfile?(
     request: PromptProfileRequest,
     options?: ProviderCallOptions

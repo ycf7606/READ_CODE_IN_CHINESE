@@ -636,3 +636,52 @@
 - Verification:
   - `npm.cmd test`
   - Prompt and candidate smoke inspection through `dist/analysis/preprocess.js` and `dist/prompts/openAICompatiblePrompt.js`
+
+
+### S16-01 Add provider-backed preprocess candidate selection
+
+- Stage: 16
+- Result: Added dedicated request and response handling for preprocess candidate selection, including remote prompt generation, provider mode wiring, and response normalization.
+- Files:
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\contracts.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\providers\providerTypes.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\providers\openAICompatibleProvider.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\providers\localProvider.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\prompts\openAICompatiblePrompt.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S16-02 Route preprocess through raw candidate pools and remote selection
+
+- Stage: 16
+- Result: Reworked file preprocessing so the extension builds a raw candidate pool first, lets the provider choose wordbook terms, then preprocesses only the selected terms with a 5-step progress model and cache-aware messages.
+- Files:
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\analysis\preprocess.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\knowledge\symbolPreprocessBuilder.ts`
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\extension.ts`
+- Verification:
+  - `npm.cmd run compile`
+  - `npm.cmd test`
+
+### S16-03 Add regression coverage for API-driven selection
+
+- Stage: 16
+- Result: Added tests for remote preprocess candidate normalization and updated preprocess-cache assertions to match the provider-selected candidate flow and 5-step progress tracking.
+- Files:
+  - `D:\project\????\READ_CODE_IN_CHINESE\src\test\index.test.ts`
+- Verification:
+  - `npm.cmd test`
+
+### S16-04 Update docs and publish the Stage 16 summary
+
+- Stage: 16
+- Result: Updated README, architecture notes, changelog, workboard, and added the Stage 16 summary so future sessions load the new API-driven preprocess-selection flow.
+- Files:
+  - `D:\project\????\READ_CODE_IN_CHINESE\README.md`
+  - `D:\project\????\READ_CODE_IN_CHINESE\docs\ARCHITECTURE.md`
+  - `D:\project\????\READ_CODE_IN_CHINESE\CHANGELOG.md`
+  - `D:\project\????\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+  - `D:\project\????\READ_CODE_IN_CHINESE\docs\project\summaries\2026-04-14-stage-16.md`
+- Verification:
+  - Manual review of the updated context files

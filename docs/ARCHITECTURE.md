@@ -33,7 +33,7 @@ The extension is designed to make source code easier to read by combining:
 ### `src/providers/`
 
 - `localProvider.ts`: zero-dependency local explanation engine
-- `openAICompatibleProvider.ts`: remote adapter for chat completion APIs and prompt-profile generation
+- `openAICompatibleProvider.ts`: remote adapter for chat completion APIs, prompt-profile generation, and preprocess candidate selection
 - `createProvider.ts`: selects the best provider from settings
 
 ### `src/knowledge/`
@@ -41,7 +41,7 @@ The extension is designed to make source code easier to read by combining:
 - `knowledgeStore.ts`: imports `.md`, `.txt`, and `.json` documents, stores them in workspace cache, and retrieves top keyword matches
 - `officialDocs.ts`: downloads preset official/reference language documents and chunks them into the knowledge library
 - `preprocessStore.ts`: stores file-scoped batches of user-defined symbol summaries
-- `symbolPreprocessBuilder.ts`: selects audience-appropriate glossary symbols first, then sends one full-file batch request and writes the preprocess cache
+- `symbolPreprocessBuilder.ts`: builds a raw file candidate pool, asks the provider to select worth-preprocessing terms when available, falls back locally if needed, then sends one full-file batch request and writes the preprocess cache
 - `tokenKnowledgeStore.ts`: stores successful token-level explanations as a compatibility fallback cache
 - `tokenKnowledgeBuilder.ts`: older token-prebuild helper retained for compatibility paths
 
@@ -73,13 +73,14 @@ The extension is designed to make source code easier to read by combining:
 9. Explanation request is built with user goal, occupation, professional level, custom prompt instructions, selection-line preview, and provider hyperparameters
 10. Settings-panel prompt generation can call the configured provider to synthesize a reusable global prompt from the current user profile
 11. Local or remote provider returns a structured explanation grounded in the exact callsite context
-12. In the background, the extension first selects audience-appropriate wordbook candidates from the current file glossary, with `intermediate` acting as the default medium-strength filter
-13. It then preprocesses only those selected symbols in one full-file batch using a dedicated wordbook prompt that ignores explanation sections
-14. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins
-15. Successful remote token explanations can still be written into the token knowledge cache
-16. Panel, glossary UI, visible wordbook, preprocess progress, and status metadata update
-17. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
-18. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
+12. In the background, the extension first builds a raw candidate pool from the current file glossary and asks the configured provider to choose wordbook terms using full-file context, with `intermediate` acting as the default medium profile
+13. If remote selection is unavailable or fails, the extension falls back to local audience-aware filtering
+14. It then preprocesses only those selected symbols in one full-file batch using a dedicated wordbook prompt that ignores explanation sections
+15. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins
+16. Successful remote token explanations can still be written into the token knowledge cache
+17. Panel, glossary UI, visible wordbook, preprocess progress, and status metadata update
+18. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
+19. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 
@@ -106,5 +107,6 @@ Workspace-local cache directory:
 - provider-backed global prompt generation with editable final text
 - VS Code-native, low-noise UI
 - faster repeated symbol explanations through file-scoped preprocessing and caching
+- API-selected wordbook candidates when a remote provider is available, with audience-aware local fallback when it is not
 - audience-aware wordbook selection so experts skip overly common symbols while beginners see more guidance
 - correctness over stale work by canceling outdated tasks quickly

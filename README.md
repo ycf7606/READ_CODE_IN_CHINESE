@@ -28,7 +28,7 @@
 ## Current Status
 
 - Stage 0-7 completed
-- Stage 13 dictionary-style UX, visible file wordbook, and provider-backed prompt generation are complete through real API validation
+- Stage 16 API-driven wordbook candidate selection is complete, so file preprocessing now uses a dedicated provider pass before batch wordbook generation
 - Tracking board: `docs/project/WORKBOARD.md`
 
 ## Main Commands
@@ -182,13 +182,14 @@ When the remote provider is enabled, the extension can preprocess the active fil
 
 - Preprocess cache path: `.read-code-in-chinese/preprocess/<file>.json`
 - Command: `Read Code In Chinese: Preprocess Current File Symbols`
-- Candidate scope is selected in a first pass using `professionalLevel` and `occupation`
-- The second pass preprocesses only those selected candidates into short wordbook-style entries
+- When a remote provider is enabled, a dedicated API selection pass chooses wordbook terms from the raw file candidate pool using full-file context, `professionalLevel`, and `occupation`
+- The second pass preprocesses only the selected terms into short wordbook-style entries
 - `professionalLevel = intermediate` acts as the practical default "medium" audience and skips overly common symbols such as `forward`
 - `professionalLevel = beginner` keeps more guidance-heavy entries
 - `professionalLevel = expert` keeps an even smaller wordbook than `intermediate`
 - Preprocess prompt shaping ignores explanation section preferences such as `summary`, `usage`, or `risk`
-- The explanation panel shows total symbol count, batch count, and progress
+- Local heuristics remain only as a fallback when the provider cannot perform the selection pass
+- The explanation panel shows 5-step preprocess progress, symbol counts, batch count, and cache-aware status messages
 - The explanation panel also shows a visible file wordbook sourced from the current file preprocess cache
 - Single-symbol explanations first check this file-level preprocess cache before hitting the model again
 - If the user changes selection while a request is still running, the older request is aborted and the newest selection wins

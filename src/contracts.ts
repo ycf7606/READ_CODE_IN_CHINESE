@@ -249,6 +249,28 @@ export interface SymbolPreprocessResponse {
   latencyMs: number;
 }
 
+export interface PreprocessCandidateSelectionRequest {
+  requestId: string;
+  languageId: string;
+  filePath: string;
+  relativeFilePath: string;
+  professionalLevel: ProfessionalLevel;
+  occupation: Occupation;
+  sourceCode: string;
+  candidatePool: PreprocessedSymbolCandidate[];
+  userGoal: string;
+  customInstructions: string;
+}
+
+export interface PreprocessCandidateSelectionResponse {
+  requestId: string;
+  languageId: string;
+  selectedTerms: string[];
+  source: string;
+  latencyMs: number;
+  note?: string;
+}
+
 export interface PromptProfileRequest {
   occupation: Occupation;
   professionalLevel: ProfessionalLevel;

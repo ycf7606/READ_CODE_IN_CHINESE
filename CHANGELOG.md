@@ -14,6 +14,7 @@
 - Stopped watched selection updates from repeatedly re-revealing the panel and stealing focus from the source editor
 - Tightened `intermediate` preprocessing so the default medium profile skips overly common symbols such as `forward`
 - Injected `occupation` and `professionalLevel` directly into runtime explanation prompts for more reliable audience-aware wording
+- Replaced fixed local preprocess-term filtering on the remote path with a dedicated API-driven candidate-selection pass plus local fallback
 
 ## 0.6.0 - 2026-04-14
 
