@@ -27,11 +27,8 @@ The extension is designed to make source code easier to read by combining:
 
 ### `src/analysis/`
 
-- `documentStructure.ts`: pure conversion from indexed document symbols into glossary entries plus class/function scope regions
-- `documentSymbols.ts`: loads VS Code document symbols and adapts them into the pure document-structure layer
-- `typeScriptAstGlossary.ts`: parses TS/JS files with the TypeScript AST to recover aliased imports, decorators, chained external calls, and imported constructors
-- `glossary.ts`: extracts symbols, imports, Python assignments, decorators, aliased-import usage, member functions, qualified call symbols, and label-like string terms, then merges them with AST/LSP results into a stable glossary
-- `wordbook.ts`: infers or reuses class/function scope ranges from the active file and annotates visible wordbook entries with scope paths for tree rendering and current-scope filtering
+- `glossary.ts`: extracts symbols, Python assignments, and label-like string terms, then generates stable term meanings
+- `wordbook.ts`: infers class/function scope ranges from the active file and annotates visible wordbook entries with scope paths for tree rendering
 - `summary.ts`: infers granularity, builds local summaries, and suggests follow-up questions
 
 ### `src/providers/`
@@ -44,7 +41,7 @@ The extension is designed to make source code easier to read by combining:
 
 - `knowledgeStore.ts`: imports `.md`, `.txt`, and `.json` documents, stores them in workspace cache, and retrieves top keyword matches
 - `officialDocs.ts`: downloads preset official/reference language documents and chunks them into the knowledge library
-- `preprocessStore.ts`: stores file-scoped batches of user-defined symbol summaries and rejects stale cache versions
+- `preprocessStore.ts`: stores file-scoped batches of user-defined symbol summaries
 - `symbolPreprocessBuilder.ts`: builds a raw file candidate pool, asks the provider to select worth-preprocessing terms when available, reconciles that result against audience retention targets, then preprocesses selected symbols in prioritized chunks while writing partial cache updates that contain only real generated entries
 - `tokenKnowledgeStore.ts`: stores successful token-level explanations as a compatibility fallback cache
 - `tokenKnowledgeBuilder.ts`: older token-prebuild helper retained for compatibility paths
@@ -61,7 +58,7 @@ The extension is designed to make source code easier to read by combining:
 ### `src/ui/`
 
 - `glossaryTreeProvider.ts`: Explorer sidebar glossary
-- `explanationPanel.ts`: explanation tab, separate layered wordbook tab, current-selection focus card, preprocess progress with clearer count semantics, lazy wordbook tree rendering, wordbook search/filter state persistence, panel script error reporting, markdown rendering, workspace preview, and follow-up chat
+- `explanationPanel.ts`: explanation tab, separate wordbook tab, selection metadata, preprocess progress with clearer count semantics, compact wordbook tree rendering, glossary snapshot, workspace preview, and follow-up chat
 - `settingsPanel.ts`: first-run onboarding, provider controls, preprocess trigger, occupation presets, provider-backed prompt generation, and editable prompt / hyperparameter controls
 
 ## Data Flow
@@ -70,9 +67,9 @@ The extension is designed to make source code easier to read by combining:
 2. Extension loads settings, logger, and workspace services
 3. Settings resolution prefers explicit VS Code configuration, then falls back to environment variables for development-host testing
 4. If the panel is open, selection changes automatically trigger explanation refresh without repeatedly re-revealing the panel
-5. Glossary cache is loaded or regenerated, and newer builds combine regex extraction with VS Code document symbols plus TypeScript AST extraction when available
+5. Glossary cache is loaded or regenerated
 6. Knowledge snippets are retrieved from imported or synced documents
-7. If the selection is a token, the extension first checks the active file's preprocess cache, but only when the cache builder version still matches the current implementation
+7. If the selection is a token, the extension first checks the active file's preprocess cache
 8. On preprocess-cache miss, it checks the older token knowledge cache
 9. Explanation request is built with user goal, occupation, professional level, custom prompt instructions, selection-line preview, and provider hyperparameters
 10. Settings-panel prompt generation can call the configured provider to synthesize a reusable global prompt from the current user profile
@@ -85,13 +82,9 @@ The extension is designed to make source code easier to read by combining:
 17. When the user changes selection or editor, stale explain/follow-up tasks are aborted so newer context wins, but background wordbook preprocessing is not canceled for ordinary same-file reading
 18. Successful remote token explanations can still be written into the token knowledge cache
 19. Visible wordbook entries are annotated with scope paths from the active file so the wordbook tab can group them by classes and functions
-20. Qualified dotted-call symbols can also enter the glossary and wordbook pipeline, which lets common library APIs participate in preprocessing
-21. The wordbook tab splits file-local symbols from library/API symbols, supports term search plus current-class/current-function/near-selection filtering, persists its tree state per file, and lazily hydrates collapsed branches
-22. Panel, glossary UI, wordbook tab, preprocess progress, and status metadata update with separate candidate-pool, selected-target, cached-entry, and batch counts, while early selection steps omit misleading batch counters
-23. The explanation page keeps the current selection visually pinned at the top and renders basic markdown in explanation-oriented surfaces
-24. The panel webview reports script-side failures back into the extension logger instead of failing silently
-25. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
-26. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
+20. Panel, glossary UI, wordbook tab, preprocess progress, and status metadata update with separate candidate-pool, selected-target, cached-entry, and batch counts, while early selection steps omit misleading batch counters
+21. User may ask a follow-up question in the same panel and adjust reasoning effort from the UI
+22. If the remote provider fails, the local provider becomes the fallback path and the logger records the failure
 
 ## Cache Layout
 
@@ -120,6 +113,4 @@ Workspace-local cache directory:
 - faster repeated symbol explanations through file-scoped preprocessing and caching
 - API-selected wordbook candidates when a remote provider is available, with audience-aware local fallback when it is not
 - audience-aware wordbook selection so experts skip overly common symbols while beginners see more guidance
-- local symbol fidelity from LSP/document-symbol data, with regex fallbacks for external API coverage
-- stale-cache safety through explicit preprocess/glossary builder versioning
 - correctness over stale work by canceling outdated tasks quickly

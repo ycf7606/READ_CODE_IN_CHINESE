@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 27
-- Latest summary: `docs/project/summaries/2026-04-15-stage-27.md`
+- Latest completed milestone: Stage 28
+- Latest summary: `docs/project/summaries/2026-04-15-stage-28.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -48,6 +48,7 @@ Every future work session must read these files in order before making changes:
 | 21 | LSP-aware wordbook structure | Completed | Hybrid LSP glossary extraction, local/API wordbook layers, search/scope filters, and per-file expand-state persistence |
 | 22 | Panel recovery and scalable extraction | Completed | Webview script hardening, preprocess cache versioning, TS AST external extraction, Python alias/decorator coverage, and near-selection wordbook filtering |
 | 27 | Rollback to stable Stage 22 baseline | Completed | Reverted unstable post-Stage-22 panel state changes, verified the Stage 22 baseline, and documented a new reimplementation route |
+| 28 | Rollback to stable Stage 19 baseline | Completed | Pulled the Stage 19 code snapshot directly, removed Current Selection-era changes, and documented a safer rebuild route for Stage 20-22 capabilities |
 
 ## Completed Tasks
 
@@ -167,13 +168,17 @@ Every future work session must read these files in order before making changes:
 - [x] S27-02 Revert `Stage 23-26` so the repository returns to the Stage 22 code baseline.
 - [x] S27-03 Verify the rollback baseline with compile and test.
 - [x] S27-04 Document the post-Stage-22 feature delta and a replacement implementation route for reintroducing those capabilities more safely.
+- [x] S28-01 Confirm that `Current Selection` first appeared in Stage 20 and lock `Stage 19` (`650fc81`) as the new stable baseline.
+- [x] S28-02 Pull the Stage 19 code snapshot directly from git history instead of layering more revert logic on top of the current runtime state.
+- [x] S28-03 Verify the restored Stage 19 baseline with compile and test.
+- [x] S28-04 Document the Stage 20-22 feature delta and a replacement route for rebuilding those capabilities without reintroducing the unstable Current Selection-era code.
 
 ## Current Todo
 
-- [ ] Reintroduce post-Stage-22 source-editor tracking with a dedicated session controller instead of embedding more state branches into `src/extension.ts`.
-- [ ] Rebuild watched-selection behavior around explicit `tracked source editor`, `panel visible`, and `panel open` state transitions with a single owner module.
-- [ ] Rework wordbook/preprocess UI updates into a pull-based snapshot model keyed by `relativeFilePath + sourceHash` so progress and entries cannot drift apart.
-- [ ] Re-add the post-Stage-22 UX features only after the new controller path is stable on real VS Code interaction tests.
+- [ ] Rebuild Stage 20 capabilities without reintroducing the top-of-page Current Selection card; keep qualified-call extraction but use lighter inline selection context.
+- [ ] Rebuild Stage 21 capabilities behind isolated helper modules so LSP layering and wordbook filtering do not increase `src/extension.ts` focus-state complexity.
+- [ ] Rebuild Stage 22 capabilities with panel hardening and scalable extraction, but keep panel state orchestration outside the webview rendering path.
+- [ ] Add a dedicated controller for source editor session state before reintroducing any post-Stage-19 panel/watch/runtime behavior.
 
 ## Open Decisions Locked for Now
 
@@ -206,7 +211,8 @@ Every future work session must read these files in order before making changes:
   - Stage 25: panel ready-time resync and tighter wordbook/progress syncing
   - Stage 26: watch/reveal state split and extra wordbook diagnostics
 - Stage 27 intentionally rolls the codebase back to the Stage 22 baseline because the post-Stage-22 fixes concentrated too much runtime state management inside `src/extension.ts`, which made the panel, selection watch, and wordbook flows fragile under real VS Code focus changes.
-- The replacement route after Stage 27 is to move panel/watch/preprocess orchestration into a dedicated controller with explicit state transitions, then reintroduce the rolled-back feature groups on top of that simpler baseline.
+- Stage 28 moves the baseline back further to Stage 19 because Stage 20 introduced the Current Selection card and related explanation-surface changes, and the user confirmed all versions containing that UI line are unusable in practice.
+- The replacement route after Stage 28 is to rebuild only the needed Stage 20-22 capabilities on top of Stage 19, with a dedicated controller for panel/watch/preprocess orchestration and without reviving the Current Selection-era explanation surface.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

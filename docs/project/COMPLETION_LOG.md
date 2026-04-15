@@ -974,3 +974,31 @@
 - Verification:
   - `cmd /c npm.cmd run compile`
   - `cmd /c npm.cmd test`
+
+### S28-01 Pull the stable Stage 19 baseline directly
+
+- Stage: 28
+- Result: Confirmed that `Current Selection` first appeared in Stage 20, pulled the Stage 19 (`650fc81`) code snapshot directly into the current branch, verified the restored baseline with compile and tests, and documented the Stage 20-22 feature delta plus the new rebuild route.
+- Files:
+  - `src/analysis/glossary.ts`
+  - `src/analysis/preprocess.ts`
+  - `src/analysis/wordbook.ts`
+  - `src/contracts.ts`
+  - `src/extension.ts`
+  - `src/knowledge/preprocessStore.ts`
+  - `src/knowledge/symbolPreprocessBuilder.ts`
+  - `src/prompts/openAICompatiblePrompt.ts`
+  - `src/providers/localProvider.ts`
+  - `src/providers/openAICompatibleProvider.ts`
+  - `src/test/index.test.ts`
+  - `src/ui/explanationPanel.ts`
+  - `src/ui/settingsPanel.ts`
+  - `README.md`
+  - `CHANGELOG.md`
+  - `docs/ARCHITECTURE.md`
+  - `docs/project/WORKBOARD.md`
+  - `docs/project/COMPLETION_LOG.md`
+  - `docs/project/summaries/2026-04-15-stage-28.md`
+- Verification:
+  - `cmd /c npm.cmd run compile`
+  - `cmd /c npm.cmd test`

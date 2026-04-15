@@ -4,8 +4,6 @@ import {
 } from "../contracts";
 import { WorkspaceStore } from "../storage/workspaceStore";
 
-export const PREPROCESS_CACHE_BUILDER_VERSION = 2;
-
 export class PreprocessStore {
   constructor(private readonly workspaceStore: WorkspaceStore) {}
 
@@ -27,29 +25,10 @@ export class PreprocessStore {
   ): Promise<PreprocessedSymbolEntry | undefined> {
     const cacheFile = await this.read(relativeFilePath);
 
-    if (!this.isCurrent(cacheFile, sourceHash)) {
+    if (!cacheFile || cacheFile.sourceHash !== sourceHash) {
       return undefined;
     }
 
     return cacheFile.entries.find((entry) => entry.normalizedTerm === term.trim().toLowerCase());
-  }
-
-  isCurrent(
-    cacheFile: PreprocessedSymbolCacheFile | undefined,
-    sourceHash?: string
-  ): cacheFile is PreprocessedSymbolCacheFile {
-    if (!cacheFile) {
-      return false;
-    }
-
-    if (cacheFile.builderVersion !== PREPROCESS_CACHE_BUILDER_VERSION) {
-      return false;
-    }
-
-    if (sourceHash && cacheFile.sourceHash !== sourceHash) {
-      return false;
-    }
-
-    return true;
   }
 }

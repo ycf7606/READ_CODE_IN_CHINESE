@@ -37,7 +37,6 @@ export type GlossaryCategory =
   | "import"
   | "constant"
   | "unknown";
-export type SymbolOrigin = "local" | "external";
 export type PreprocessedSymbolCategory =
   | "variable"
   | "function"
@@ -81,8 +80,6 @@ export interface GlossaryEntry {
   sourceLine?: number;
   references: number;
   source: "generated" | "user";
-  symbolOrigin?: SymbolOrigin;
-  scopePath?: string[];
   updatedAt: string;
 }
 
@@ -90,7 +87,6 @@ export interface GlossaryCacheFile {
   languageId: string;
   relativeFilePath: string;
   sourceHash: string;
-  builderVersion?: number;
   generatedAt: string;
   entries: GlossaryEntry[];
 }
@@ -213,8 +209,6 @@ export interface PreprocessedSymbolCandidate {
   sourceLine: number;
   references: number;
   score: number;
-  symbolOrigin?: SymbolOrigin;
-  scopePath?: string[];
 }
 
 export interface PreprocessedSymbolEntry {
@@ -225,7 +219,6 @@ export interface PreprocessedSymbolEntry {
   summary: string;
   generatedAt: string;
   isPlaceholder?: boolean;
-  symbolOrigin?: SymbolOrigin;
   scopePath?: string[];
 }
 
@@ -233,7 +226,6 @@ export interface PreprocessedSymbolCacheFile {
   languageId: string;
   relativeFilePath: string;
   sourceHash: string;
-  builderVersion?: number;
   generatedAt: string;
   entries: PreprocessedSymbolEntry[];
 }

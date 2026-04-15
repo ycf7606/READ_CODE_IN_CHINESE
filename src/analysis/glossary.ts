@@ -1,4 +1,4 @@
-import { GlossaryCategory, GlossaryEntry, SymbolOrigin } from "../contracts";
+import { GlossaryCategory, GlossaryEntry } from "../contracts";
 import { humanizeIdentifier } from "../utils/text";
 
 const COMMON_KEYWORDS = new Set([
@@ -60,8 +60,6 @@ const CATEGORY_PRIORITY: Record<GlossaryCategory, number> = {
   label: 5
 };
 
-type ImportedAliasKind = "function" | "class" | "namespace";
-
 function buildMeaning(term: string, category: GlossaryCategory): string {
   const phrase = humanizeIdentifier(term) || term.toLowerCase();
 
@@ -105,9 +103,7 @@ function addEntry(
   map: Map<string, GlossaryEntry>,
   term: string,
   category: GlossaryCategory,
-  sourceLine: number,
-  symbolOrigin: SymbolOrigin = "local",
-  scopePath?: string[]
+  sourceLine: number
 ): void {
   const trimmedTerm = term.trim();
   const isLabel = category === "label";
@@ -127,12 +123,6 @@ function addEntry(
     if (!existingEntry.sourceLine && sourceLine > 0) {
       existingEntry.sourceLine = sourceLine;
     }
-    if (existingEntry.symbolOrigin !== "local" && symbolOrigin === "local") {
-      existingEntry.symbolOrigin = "local";
-    }
-    if ((!existingEntry.scopePath || existingEntry.scopePath.length === 0) && scopePath?.length) {
-      existingEntry.scopePath = [...scopePath];
-    }
     if (CATEGORY_PRIORITY[category] > CATEGORY_PRIORITY[existingEntry.category]) {
       existingEntry.category = category;
       existingEntry.meaning = buildMeaning(existingEntry.term, category);
@@ -148,8 +138,6 @@ function addEntry(
     sourceLine,
     references: 1,
     source: "generated",
-    symbolOrigin,
-    scopePath: scopePath?.length ? [...scopePath] : undefined,
     updatedAt: new Date().toISOString()
   });
 }
@@ -164,7 +152,7 @@ function addStringLabelEntries(
   }
 
   for (const match of line.matchAll(/['"`]([A-Za-z][A-Za-z0-9_-]{1,40})['"`]/g)) {
-    addEntry(map, match[1], "label", lineNumber, "local");
+    addEntry(map, match[1], "label", lineNumber);
   }
 }
 
@@ -178,11 +166,11 @@ function addPythonAssignmentEntries(
   }
 
   for (const match of line.matchAll(/(?:^|[\s,(])([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?![=>=])/g)) {
-    addEntry(map, match[1], "variable", lineNumber, "local");
+    addEntry(map, match[1], "variable", lineNumber);
   }
 
   for (const match of line.matchAll(/\b(?:self|cls)\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g)) {
-    addEntry(map, match[1], "variable", lineNumber, "local");
+    addEntry(map, match[1], "variable", lineNumber);
   }
 }
 
@@ -192,176 +180,7 @@ function addMemberFunctionEntries(
   lineNumber: number
 ): void {
   for (const match of line.matchAll(/\b(?:this|self|cls)\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
-    addEntry(map, match[1], "function", lineNumber, "local");
-  }
-}
-
-function addQualifiedCallEntries(
-  map: Map<string, GlossaryEntry>,
-  line: string,
-  lineNumber: number
-): void {
-  for (const match of line.matchAll(
-    /(?:\b[A-Za-z_][A-Za-z0-9_]*\.)+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g
-  )) {
-    const term = match[1];
-    const category = /^[A-Z]/.test(term) ? "class" : "function";
-    addEntry(map, term, category, lineNumber, "external");
-  }
-}
-
-function addImportEntries(
-  map: Map<string, GlossaryEntry>,
-  line: string,
-  lineNumber: number,
-  languageId: string,
-  importedAliases: Map<string, ImportedAliasKind>
-): void {
-  for (const match of line.matchAll(/\bimport\s+([A-Za-z_][A-Za-z0-9_]*)\s+from\b/g)) {
-    addEntry(map, match[1], "import", lineNumber, "external");
-    registerImportedAlias(importedAliases, match[1]);
-  }
-
-  for (const match of line.matchAll(/\bimport\s+\*\s+as\s+([A-Za-z_][A-Za-z0-9_]*)\b/g)) {
-    addEntry(map, match[1], "import", lineNumber, "external");
-    registerImportedAlias(importedAliases, match[1], match[1], "namespace");
-  }
-
-  for (const match of line.matchAll(/\bimport\s*\{([^}]*)\}/g)) {
-    const clause = match[1];
-
-    for (const part of clause.split(",")) {
-      const trimmedPart = part.trim();
-
-      if (!trimmedPart) {
-        continue;
-      }
-
-      const aliasMatch = /\bas\s+([A-Za-z_][A-Za-z0-9_]*)$/i.exec(trimmedPart);
-      const directMatch = /^([A-Za-z_][A-Za-z0-9_]*)$/.exec(trimmedPart);
-      const term = aliasMatch?.[1] ?? directMatch?.[1];
-
-      if (term) {
-        addEntry(map, term, "import", lineNumber, "external");
-        registerImportedAlias(importedAliases, term, directMatch?.[1] ?? term);
-      }
-    }
-  }
-
-  if (languageId === "python") {
-    for (const match of line.matchAll(
-      /\bimport\s+([A-Za-z_][A-Za-z0-9_.]*)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?/g
-    )) {
-      const importedModule = match[1].split(".").pop() ?? match[1];
-      const alias = match[2] ?? importedModule;
-      addEntry(map, alias, "import", lineNumber, "external");
-      registerImportedAlias(importedAliases, alias, importedModule, "namespace");
-    }
-
-    for (const match of line.matchAll(/\bfrom\s+[A-Za-z_][A-Za-z0-9_.]*\s+import\s+(.+)$/g)) {
-      const clause = match[1];
-
-      for (const part of clause.split(",")) {
-        const trimmedPart = part.trim();
-
-        if (!trimmedPart) {
-          continue;
-        }
-
-        const aliasMatch = /\bas\s+([A-Za-z_][A-Za-z0-9_]*)$/i.exec(trimmedPart);
-        const directMatch = /^([A-Za-z_][A-Za-z0-9_]*)$/.exec(trimmedPart);
-        const term = aliasMatch?.[1] ?? directMatch?.[1];
-
-        if (term) {
-          addEntry(map, term, "import", lineNumber, "external");
-          registerImportedAlias(importedAliases, term, directMatch?.[1] ?? term);
-        }
-      }
-    }
-  }
-}
-
-function registerImportedAlias(
-  importedAliases: Map<string, ImportedAliasKind>,
-  localName: string,
-  originalName?: string,
-  kind: ImportedAliasKind = "function"
-): void {
-  importedAliases.set(
-    localName.toLowerCase(),
-    kind === "namespace"
-      ? "namespace"
-      : /^[A-Z]/.test(originalName ?? localName)
-        ? "class"
-        : "function"
-  );
-}
-
-function addImportedAliasUsageEntries(
-  map: Map<string, GlossaryEntry>,
-  line: string,
-  lineNumber: number,
-  importedAliases: Map<string, ImportedAliasKind>
-): void {
-  for (const match of line.matchAll(/\bnew\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
-    const term = match[1];
-
-    if (importedAliases.has(term.toLowerCase())) {
-      addEntry(map, term, "class", lineNumber, "external");
-    }
-  }
-
-  for (const match of line.matchAll(/(?:^|[^.\w])([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
-    const term = match[1];
-    const aliasKind = importedAliases.get(term.toLowerCase());
-
-    if (!aliasKind || aliasKind === "namespace") {
-      continue;
-    }
-
-    addEntry(map, term, aliasKind === "class" ? "class" : "function", lineNumber, "external");
-  }
-}
-
-function addDecoratorEntries(
-  map: Map<string, GlossaryEntry>,
-  line: string,
-  lineNumber: number,
-  importedAliases: Map<string, ImportedAliasKind>
-): void {
-  const decoratorMatch =
-    /^\s*@((?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*)/.exec(line);
-
-  if (!decoratorMatch) {
-    return;
-  }
-
-  const fullDecoratorName = decoratorMatch[1];
-  const segments = fullDecoratorName.split(".");
-  const rootSegment = segments[0];
-  const finalSegment = segments[segments.length - 1];
-
-  if (segments.length > 1 || importedAliases.has(rootSegment.toLowerCase())) {
-    addEntry(
-      map,
-      finalSegment,
-      /^[A-Z]/.test(finalSegment) ? "class" : "function",
-      lineNumber,
-      "external"
-    );
-    return;
-  }
-
-  const aliasKind = importedAliases.get(finalSegment.toLowerCase());
-
-  if (aliasKind) {
-    addEntry(
-      map,
-      finalSegment,
-      aliasKind === "class" ? "class" : "function",
-      lineNumber,
-      "external"
-    );
+    addEntry(map, match[1], "function", lineNumber);
   }
 }
 
@@ -371,28 +190,24 @@ export function extractGlossaryEntries(
   maxEntries = 60
 ): GlossaryEntry[] {
   const glossaryMap = new Map<string, GlossaryEntry>();
-  const importedAliases = new Map<string, ImportedAliasKind>();
   const lines = sourceCode.split(/\r?\n/);
 
   for (const [index, line] of lines.entries()) {
     const lineNumber = index + 1;
 
     for (const match of line.matchAll(/\b(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
-      addEntry(glossaryMap, match[1], "variable", lineNumber, "local");
+      addEntry(glossaryMap, match[1], "variable", lineNumber);
     }
 
     for (const match of line.matchAll(/\b(?:this|self)\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g)) {
-      addEntry(glossaryMap, match[1], "variable", lineNumber, "local");
+      addEntry(glossaryMap, match[1], "variable", lineNumber);
     }
 
     for (const match of line.matchAll(/\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
-      addEntry(glossaryMap, match[1], "function", lineNumber, "local");
+      addEntry(glossaryMap, match[1], "function", lineNumber);
     }
 
     addMemberFunctionEntries(glossaryMap, line, lineNumber);
-    addDecoratorEntries(glossaryMap, line, lineNumber, importedAliases);
-    addQualifiedCallEntries(glossaryMap, line, lineNumber);
-    addImportedAliasUsageEntries(glossaryMap, line, lineNumber, importedAliases);
 
     for (const match of line.matchAll(
       /\b(?:class|interface|type|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/g
@@ -405,20 +220,22 @@ export function extractGlossaryEntries(
             ? "type"
             : "unknown";
 
-      addEntry(glossaryMap, match[1], category, lineNumber, "local");
+      addEntry(glossaryMap, match[1], category, lineNumber);
     }
 
-    addImportEntries(glossaryMap, line, lineNumber, languageId, importedAliases);
+    for (const match of line.matchAll(/\bimport\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      addEntry(glossaryMap, match[1], "import", lineNumber);
+    }
 
     for (const match of line.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)) {
-      addEntry(glossaryMap, match[1], "constant", lineNumber, "local");
+      addEntry(glossaryMap, match[1], "constant", lineNumber);
     }
 
     addStringLabelEntries(glossaryMap, line, lineNumber);
 
     if (languageId === "python") {
       for (const match of line.matchAll(/\bdef\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
-        addEntry(glossaryMap, match[1], "function", lineNumber, "local");
+        addEntry(glossaryMap, match[1], "function", lineNumber);
       }
 
       addPythonAssignmentEntries(glossaryMap, line, lineNumber);
@@ -429,7 +246,7 @@ export function extractGlossaryEntries(
     const fallbackTokens = sourceCode.match(/\b[A-Za-z_][A-Za-z0-9_]{2,}\b/g) ?? [];
 
     for (const token of fallbackTokens) {
-      addEntry(glossaryMap, token, "unknown", 0, "local");
+      addEntry(glossaryMap, token, "unknown", 0);
     }
   }
 
@@ -470,49 +287,6 @@ export function mergeGlossaryWithUserOverrides(
   }
 
   return mergedEntries.sort(
-    (left, right) => right.references - left.references || left.term.localeCompare(right.term)
-  );
-}
-
-export function mergeGeneratedGlossaryEntries(
-  ...entryCollections: GlossaryEntry[][]
-): GlossaryEntry[] {
-  const mergedEntryMap = new Map<string, GlossaryEntry>();
-
-  for (const entries of entryCollections) {
-    for (const entry of entries) {
-      const existingEntry = mergedEntryMap.get(entry.normalizedTerm);
-
-      if (!existingEntry) {
-        mergedEntryMap.set(entry.normalizedTerm, {
-          ...entry,
-          scopePath: entry.scopePath?.length ? [...entry.scopePath] : undefined
-        });
-        continue;
-      }
-
-      existingEntry.references += entry.references;
-
-      if (!existingEntry.sourceLine && entry.sourceLine) {
-        existingEntry.sourceLine = entry.sourceLine;
-      }
-
-      if (CATEGORY_PRIORITY[entry.category] > CATEGORY_PRIORITY[existingEntry.category]) {
-        existingEntry.category = entry.category;
-        existingEntry.meaning = buildMeaning(existingEntry.term, entry.category);
-      }
-
-      if (existingEntry.symbolOrigin !== "local" && entry.symbolOrigin === "local") {
-        existingEntry.symbolOrigin = "local";
-      }
-
-      if ((!existingEntry.scopePath || existingEntry.scopePath.length === 0) && entry.scopePath?.length) {
-        existingEntry.scopePath = [...entry.scopePath];
-      }
-    }
-  }
-
-  return Array.from(mergedEntryMap.values()).sort(
     (left, right) => right.references - left.references || left.term.localeCompare(right.term)
   );
 }

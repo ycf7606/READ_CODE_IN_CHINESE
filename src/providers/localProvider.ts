@@ -136,9 +136,7 @@ export class LocalExplanationProvider implements ExplanationProvider {
           candidate.category
         )}，具体职责要结合附近赋值和调用位置判断。`,
         generatedAt: new Date().toISOString(),
-        isPlaceholder: false,
-        symbolOrigin: candidate.symbolOrigin,
-        scopePath: candidate.scopePath?.length ? [...candidate.scopePath] : undefined
+        isPlaceholder: false
       })),
       source: this.id,
       latencyMs: Date.now() - startedAt

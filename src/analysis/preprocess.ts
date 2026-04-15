@@ -80,9 +80,7 @@ export function buildPreprocessCandidatePool(
       category: entry.category,
       sourceLine: entry.sourceLine ?? 0,
       references: entry.references,
-      score: scoreCandidate(entry),
-      symbolOrigin: entry.symbolOrigin,
-      scopePath: entry.scopePath?.length ? [...entry.scopePath] : undefined
+      score: scoreCandidate(entry)
     }))
     .sort(compareCandidateOrder);
 }
@@ -203,17 +201,13 @@ function scoreCandidate(
   const nameComplexityWeight = /[A-Z_]/.test(entry.term) ? 6 : 0;
   const labelShapeWeight = entry.category === "label" && /[-_]/.test(entry.term) ? 4 : 0;
   const sourceLineWeight = entry.sourceLine ? Math.max(0, 12 - Math.min(entry.sourceLine, 12)) : 0;
-  const localOriginWeight = entry.symbolOrigin === "local" ? 10 : 2;
-  const scopeWeight = entry.scopePath?.length ? Math.min(8, entry.scopePath.length * 3) : 0;
 
   return (
     categoryWeight +
     entry.references * 6 +
     nameComplexityWeight +
     labelShapeWeight +
-    sourceLineWeight +
-    localOriginWeight +
-    scopeWeight
+    sourceLineWeight
   );
 }
 

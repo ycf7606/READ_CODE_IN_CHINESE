@@ -2,19 +2,8 @@ import { promises as fs } from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { buildPreprocessCandidatePool } from "./analysis/preprocess";
-import {
-  extractGlossaryEntries,
-  mergeGeneratedGlossaryEntries,
-  mergeGlossaryWithUserOverrides
-} from "./analysis/glossary";
-import { loadDocumentStructureFromLsp } from "./analysis/documentSymbols";
-import { extractTypeScriptAstGlossaryEntries } from "./analysis/typeScriptAstGlossary";
-import {
-  attachWordbookScopePaths,
-  collectScopeRegions,
-  findWordbookSelectionContext,
-  WordbookScopeRegion
-} from "./analysis/wordbook";
+import { extractGlossaryEntries, mergeGlossaryWithUserOverrides } from "./analysis/glossary";
+import { attachWordbookScopePaths } from "./analysis/wordbook";
 import {
   createWorkspaceFileSummary,
   createWorkspaceIndexMarkdown,
@@ -37,9 +26,7 @@ import {
 } from "./contracts";
 import { syncOfficialDocsForLanguage } from "./knowledge/officialDocs";
 import { KnowledgeStore } from "./knowledge/knowledgeStore";
-import {
-  PreprocessStore
-} from "./knowledge/preprocessStore";
+import { PreprocessStore } from "./knowledge/preprocessStore";
 import {
   buildCachedPreprocessExplanation,
   buildSymbolPreprocessCache
@@ -81,7 +68,6 @@ interface ExplainSelectionOptions {
 
 const ACTIVE_GLOSSARY_VIEW = "readCodeInChinese.glossaryView";
 const PREPROCESS_DELAY_MS = 500;
-const GLOSSARY_BUILDER_VERSION = 2;
 
 export function activate(context: vscode.ExtensionContext): void {
   const logger = new ExtensionLogger();
@@ -106,13 +92,6 @@ export function activate(context: vscode.ExtensionContext): void {
   let activeFollowUpTask: ActiveTaskState | undefined;
   let activePreprocessTask: ActiveTaskState | undefined;
   const recentSelectionLinesByFile = new Map<string, number[]>();
-  const scopeRegionCache = new Map<
-    string,
-    {
-      sourceHash: string;
-      scopeRegions: WordbookScopeRegion[];
-    }
-  >();
 
   const panel = new ExplanationPanel(async (message) => {
     if (message.type === "ready") {
@@ -128,14 +107,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (message.type === "setReasoningEffort") {
       await persistConfigurationValue("provider.reasoningEffort", message.reasoningEffort);
-      return;
-    }
-
-    if (message.type === "panelScriptError") {
-      logger.error("Explanation panel script error", message.error);
-      panel.setState({
-        statusMessage: `Panel UI error: ${message.error}`
-      });
       return;
     }
 
@@ -613,7 +584,6 @@ export function activate(context: vscode.ExtensionContext): void {
         isWatchingSelection: panel.isWatchingSelection(),
         currentFile: relativeFilePath,
         currentSelectionLabel: formatSelectionLabel(editor.selection),
-        currentSelectionText: selectedText,
         currentGranularity: granularity,
         isLoading: true,
         reasoningEffort: getSettings().providerReasoningEffort,
@@ -714,12 +684,12 @@ export function activate(context: vscode.ExtensionContext): void {
       panel.setState({
         explanation: response,
         chatHistory: sessionState.chatHistory,
+        glossaryEntries: glossaryEntries.length > 0 ? glossaryEntries : response.glossaryHints,
         wordbookEntries: getVisibleWordbookEntries(editor),
         workspaceIndex: sessionState.workspaceIndex,
         isWatchingSelection: panel.isWatchingSelection(),
         currentFile: relativeFilePath,
         currentSelectionLabel: formatSelectionLabel(editor.selection),
-        currentSelectionText: selectedText,
         currentGranularity: granularity,
         isLoading: false,
         reasoningEffort: getSettings().providerReasoningEffort,
@@ -870,11 +840,11 @@ export function activate(context: vscode.ExtensionContext): void {
         panel.setState({
           explanation: response,
           chatHistory: [],
+          glossaryEntries,
           wordbookEntries: getVisibleWordbookEntries(editor),
           isWatchingSelection: panel.isWatchingSelection(),
           currentFile: relativeFilePath,
           currentSelectionLabel: "Entire file",
-          currentSelectionText: undefined,
           currentGranularity: "file",
           isLoading: false,
           reasoningEffort: getSettings().providerReasoningEffort,
@@ -927,7 +897,6 @@ export function activate(context: vscode.ExtensionContext): void {
           wordbookEntries: getVisibleWordbookEntries(editor),
           isWatchingSelection: panel.isWatchingSelection(),
           currentFile: projectContext.relativeFilePath,
-          currentSelectionText: undefined,
           currentGranularity: "workspace",
           isLoading: false,
           reasoningEffort: getSettings().providerReasoningEffort,
@@ -963,10 +932,10 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!editor) {
       glossaryTreeProvider.setEntries([]);
       panel.setState({
+        glossaryEntries: [],
         wordbookEntries: [],
         currentFile: undefined,
         currentSelectionLabel: undefined,
-        currentSelectionText: undefined,
         isWatchingSelection: panel.isWatchingSelection()
       });
       return;
@@ -977,10 +946,10 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!projectContext) {
       glossaryTreeProvider.setEntries([]);
       panel.setState({
+        glossaryEntries: [],
         wordbookEntries: [],
         currentFile: path.basename(editor.document.uri.fsPath),
         currentSelectionLabel: formatSelectionLabel(editor.selection),
-        currentSelectionText: readSelectionText(editor),
         isWatchingSelection: panel.isWatchingSelection()
       });
       return;
@@ -997,9 +966,9 @@ export function activate(context: vscode.ExtensionContext): void {
     sessionState.glossaryEntries = glossaryEntries;
     glossaryTreeProvider.setEntries(glossaryEntries);
     panel.setState({
+      glossaryEntries,
       currentFile: projectContext.relativeFilePath,
       currentSelectionLabel: formatSelectionLabel(editor.selection),
-      currentSelectionText: readSelectionText(editor),
       isWatchingSelection: panel.isWatchingSelection()
     });
   }
@@ -1049,7 +1018,6 @@ export function activate(context: vscode.ExtensionContext): void {
       languageId: editor.document.languageId,
       relativeFilePath: projectContext.relativeFilePath,
       sourceHash,
-      builderVersion: GLOSSARY_BUILDER_VERSION,
       generatedAt: new Date().toISOString(),
       entries: updatedEntries
     };
@@ -1061,6 +1029,7 @@ export function activate(context: vscode.ExtensionContext): void {
     sessionState.glossaryEntries = updatedEntries;
     glossaryTreeProvider.setEntries(updatedEntries);
     panel.setState({
+      glossaryEntries: updatedEntries,
       lastUpdatedAt: new Date().toLocaleString()
     });
 
@@ -1308,8 +1277,7 @@ export function activate(context: vscode.ExtensionContext): void {
         : undefined,
       currentSelectionLabel: getPreferredSourceEditor()
         ? formatSelectionLabel(getPreferredSourceEditor()!.selection)
-        : undefined,
-      currentSelectionText: readSelectionText(getPreferredSourceEditor())
+        : undefined
     });
 
     if (options.showWarnings) {
@@ -1356,74 +1324,8 @@ export function activate(context: vscode.ExtensionContext): void {
     return attachWordbookScopePaths(
       sessionState.wordbookEntries,
       editor.document.getText(),
-      editor.document.languageId,
-      getCachedScopeRegions(editor)
+      editor.document.languageId
     );
-  }
-
-  function getCachedScopeRegions(
-    editor: vscode.TextEditor | undefined
-  ): WordbookScopeRegion[] | undefined {
-    if (!editor) {
-      return undefined;
-    }
-
-    const relativeFilePath = getRelativeFilePath(editor);
-
-    if (!relativeFilePath) {
-      return undefined;
-    }
-
-    const cachedEntry = scopeRegionCache.get(relativeFilePath);
-    const sourceHash = createContentHash(editor.document.getText());
-
-    if (!cachedEntry || cachedEntry.sourceHash !== sourceHash) {
-      return undefined;
-    }
-
-    return cachedEntry.scopeRegions;
-  }
-
-  async function ensureScopeRegions(
-    document: vscode.TextDocument,
-    relativeFilePath: string,
-    sourceHash: string
-  ): Promise<WordbookScopeRegion[]> {
-    const cachedEntry = scopeRegionCache.get(relativeFilePath);
-
-    if (cachedEntry && cachedEntry.sourceHash === sourceHash) {
-      return cachedEntry.scopeRegions;
-    }
-
-    try {
-      const lspStructure = await loadDocumentStructureFromLsp(document);
-
-      if (lspStructure?.scopeRegions.length) {
-        scopeRegionCache.set(relativeFilePath, {
-          sourceHash,
-          scopeRegions: lspStructure.scopeRegions
-        });
-        logger.info("Loaded document symbols for wordbook scopes", {
-          relativeFilePath,
-          scopeCount: lspStructure.scopeRegions.length
-        });
-
-        return lspStructure.scopeRegions;
-      }
-    } catch (error) {
-      logger.warn("Document symbol lookup failed, using fallback scopes", {
-        relativeFilePath,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    const fallbackScopeRegions = collectScopeRegions(document.getText(), document.languageId);
-    scopeRegionCache.set(relativeFilePath, {
-      sourceHash,
-      scopeRegions: fallbackScopeRegions
-    });
-
-    return fallbackScopeRegions;
   }
 
   async function refreshWordbookForActiveEditor(): Promise<void> {
@@ -1453,10 +1355,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const preprocessStore = new PreprocessStore(projectContext.workspaceStore);
     const sourceHash = createContentHash(editor.document.getText());
-    await ensureScopeRegions(editor.document, projectContext.relativeFilePath, sourceHash);
     const cacheFile = await preprocessStore.read(projectContext.relativeFilePath);
 
-    if (preprocessStore.isCurrent(cacheFile, sourceHash)) {
+    if (cacheFile && cacheFile.sourceHash === sourceHash) {
       const sanitizedEntries = sanitizeWordbookEntries(cacheFile.entries);
 
       if (sanitizedEntries.length !== cacheFile.entries.length) {
@@ -1481,31 +1382,12 @@ export function activate(context: vscode.ExtensionContext): void {
     const sourceEditor = getPreferredSourceEditor(editor);
     const projectContext = sourceEditor ? getProjectContext(sourceEditor.document, logger) : undefined;
     const currentGranularity = inferCurrentGranularity(sourceEditor);
-    const selectionLine = sourceEditor
-      ? sourceEditor.selection.isEmpty
-        ? sourceEditor.selection.active.line + 1
-        : Math.floor((sourceEditor.selection.start.line + sourceEditor.selection.end.line) / 2) + 1
-      : 0;
-    const selectionContext =
-      sourceEditor && selectionLine > 0
-        ? findWordbookSelectionContext(
-            selectionLine,
-            sourceEditor.document.getText(),
-            sourceEditor.document.languageId,
-            getCachedScopeRegions(sourceEditor)
-          )
-        : undefined;
 
     panel.setState({
       isWatchingSelection: panel.isWatchingSelection(),
       currentFile: projectContext?.relativeFilePath ?? sourceEditor?.document.fileName,
       currentSelectionLabel: sourceEditor ? formatSelectionLabel(sourceEditor.selection) : undefined,
-      currentSelectionText: readSelectionText(sourceEditor),
-      currentSelectionLine: selectionLine > 0 ? selectionLine : undefined,
       currentGranularity,
-      currentClassScope: selectionContext?.currentClassScope,
-      currentFunctionScope: selectionContext?.currentFunctionScope,
-      currentScopePath: selectionContext?.scopePath,
       wordbookEntries: getVisibleWordbookEntries(sourceEditor),
       reasoningEffort: getSettings().providerReasoningEffort,
       preprocessProgress: getVisiblePreprocessProgress(sessionState.preprocessProgress, sourceEditor)
@@ -1850,56 +1732,21 @@ async function getOrCreateGlossary(
 ): Promise<GlossaryEntry[]> {
   const currentSourceHash = createContentHash(document.getText());
   const existingCache = await workspaceStore.readGlossaryCache(relativeFilePath);
-  const isCacheValid = Boolean(
-    existingCache &&
-      existingCache.sourceHash === currentSourceHash &&
-      existingCache.builderVersion === GLOSSARY_BUILDER_VERSION
-  );
 
-  if (!forceRefresh && isCacheValid) {
-    const cachedGlossary = existingCache as GlossaryCacheFile;
-
+  if (!forceRefresh && existingCache && existingCache.sourceHash === currentSourceHash) {
     logger?.info("Glossary cache hit", {
       relativeFilePath,
-      entryCount: cachedGlossary.entries.length,
-      builderVersion: cachedGlossary.builderVersion
+      entryCount: existingCache.entries.length
     });
-    return cachedGlossary.entries;
+    return existingCache.entries;
   }
 
   logger?.info("Glossary cache miss", {
     relativeFilePath,
-    forceRefresh,
-    cachedBuilderVersion: existingCache?.builderVersion ?? 0
+    forceRefresh
   });
 
-  const sourceText = document.getText();
-  const regexEntries = extractGlossaryEntries(sourceText, document.languageId);
-  const typeScriptAstEntries = extractTypeScriptAstGlossaryEntries(
-    sourceText,
-    document.languageId
-  );
-  let lspEntries: GlossaryEntry[] = [];
-
-  try {
-    const lspStructure = await loadDocumentStructureFromLsp(document);
-    lspEntries = lspStructure?.glossaryEntries ?? [];
-    logger?.info("Glossary rebuild loaded document symbols", {
-      relativeFilePath,
-      symbolCount: lspEntries.length
-    });
-  } catch (error) {
-    logger?.warn("Glossary rebuild could not load document symbols", {
-      relativeFilePath,
-      error: error instanceof Error ? error.message : String(error)
-    });
-  }
-
-  const generatedEntries = mergeGeneratedGlossaryEntries(
-    regexEntries,
-    typeScriptAstEntries,
-    lspEntries
-  );
+  const generatedEntries = extractGlossaryEntries(document.getText(), document.languageId);
   const mergedEntries = mergeGlossaryWithUserOverrides(
     generatedEntries,
     existingCache?.entries ?? []
@@ -1908,7 +1755,6 @@ async function getOrCreateGlossary(
     languageId: document.languageId,
     relativeFilePath,
     sourceHash: currentSourceHash,
-    builderVersion: GLOSSARY_BUILDER_VERSION,
     generatedAt: new Date().toISOString(),
     entries: mergedEntries
   };
@@ -2209,16 +2055,6 @@ function inferCurrentGranularity(
 
 function getRelativeFilePath(editor: vscode.TextEditor | undefined): string | undefined {
   return editor ? getProjectContext(editor.document)?.relativeFilePath : undefined;
-}
-
-function readSelectionText(editor: vscode.TextEditor | undefined): string | undefined {
-  if (!editor || editor.selection.isEmpty) {
-    return undefined;
-  }
-
-  const selectedText = editor.document.getText(editor.selection).trim();
-
-  return selectedText || undefined;
 }
 
 function getVisiblePreprocessProgress(

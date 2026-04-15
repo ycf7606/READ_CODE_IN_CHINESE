@@ -28,7 +28,7 @@
 ## Current Status
 
 - Stage 0-7 completed
-- Stage 22 panel recovery and scalable extraction is complete, so the panel webview is hardened, preprocess caches are versioned, and external symbol coverage is stronger for TS/Python projects
+- Stage 19 wordbook scope grouping and member-function coverage are complete, so the wordbook now renders as a collapsible class/function tree and includes more class-local methods
 - Tracking board: `docs/project/WORKBOARD.md`
 
 ## Main Commands
@@ -58,19 +58,14 @@
   - latest explanation
   - active file and selection metadata
   - one detected category for the current selection
-  - a prominent current-selection focus card at the top of the explanation page
   - loading spinner while remote analysis is running
   - automatic selection watching when the panel is open, without dropping the current source-editor context when the user clicks the panel
   - inline reasoning-effort selector for follow-up chat
   - settings button that opens the configuration panel
   - preprocess progress with separate candidate-pool, selected-target, cached-entry, and batch counts
   - visible full-file wordbook for the current file preprocess cache
-  - layered wordbook view that separates `File Symbols` from `Library / API Symbols`
   - compact collapsible wordbook tree grouped by classes, functions, and module scope
-  - term search and quick filtering to the current class, current function, or current selection neighborhood
-  - per-file remembered wordbook expand state, search text, and scope filter
-  - lazy tree hydration for large wordbooks, so collapsed branches are not fully rendered up front
-  - basic markdown rendering for summaries, sections, wordbook entries, and follow-up chat
+  - glossary snapshot
   - workspace index preview
   - follow-up chat
 - Output channel: `Read Code In Chinese`
@@ -198,11 +193,7 @@ When the remote provider is enabled, the extension can preprocess the active fil
 - The explanation panel shows the full file wordbook sourced from the current file preprocess cache instead of a short preview slice
 - Legacy placeholder cache entries from older builds are removed automatically when the file is reopened, so stale partial caches do not appear complete
 - Member function references such as `self.squeeze(...)`, `cls.build(...)`, and `this.load(...)` can now enter the wordbook candidate pool as file-local functions
-- Qualified call symbols such as `nn.Parameter(...)` and `torch.empty(...)` can also enter the wordbook candidate pool, so common library APIs are available to preprocessing
-- Imported aliases and decorator usages now also contribute external symbols, and TypeScript projects additionally use AST-based extraction for aliased imports, decorators, chained external calls, and imported constructors
-- Visible wordbook entries are annotated with scope paths from the active file, split into file-local vs external API layers, and rendered as a collapsible class/function tree instead of one flat list
-- Glossary rebuilding now also uses VS Code `DocumentSymbol` data when available, so local classes, methods, and variables are more robust than the earlier regex-only path
-- Preprocess caches now carry a builder version so old wordbook cache layouts are ignored after extraction changes
+- Visible wordbook entries are annotated with scope paths from the active file and rendered as a collapsible class/function tree instead of one flat list
 - Single-symbol explanations first check this file-level preprocess cache before hitting the model again
 - If the user changes selection while an explanation request is still running, the older explanation is aborted and the newest selection wins
 - Background wordbook preprocessing keeps running while the user continues reading the same file

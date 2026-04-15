@@ -2,7 +2,7 @@ import { PreprocessedSymbolEntry } from "../contracts";
 
 type ScopeKind = "class" | "function";
 
-export interface WordbookScopeRegion {
+interface ScopeRegion {
   label: string;
   kind: ScopeKind;
   startLine: number;
@@ -10,18 +10,12 @@ export interface WordbookScopeRegion {
   path: string[];
 }
 
-interface PythonScopeRegion extends WordbookScopeRegion {
+interface PythonScopeRegion extends ScopeRegion {
   indent: number;
 }
 
-interface BraceScopeRegion extends WordbookScopeRegion {
+interface BraceScopeRegion extends ScopeRegion {
   bodyDepth: number;
-}
-
-export interface WordbookSelectionContext {
-  scopePath?: string[];
-  currentClassScope?: string;
-  currentFunctionScope?: string;
 }
 
 const METHOD_NAME_EXCLUSIONS = new Set([
@@ -37,14 +31,13 @@ const METHOD_NAME_EXCLUSIONS = new Set([
 export function attachWordbookScopePaths(
   entries: PreprocessedSymbolEntry[],
   sourceCode: string,
-  languageId: string,
-  scopeRegions?: WordbookScopeRegion[]
+  languageId: string
 ): PreprocessedSymbolEntry[] {
   if (!entries.length || !sourceCode.trim()) {
     return entries;
   }
 
-  const scopes = scopeRegions?.length ? scopeRegions : collectScopeRegions(sourceCode, languageId);
+  const scopes = collectScopeRegions(sourceCode, languageId);
 
   if (!scopes.length) {
     return entries;
@@ -52,31 +45,11 @@ export function attachWordbookScopePaths(
 
   return entries.map((entry) => ({
     ...entry,
-    scopePath: entry.scopePath?.length ? entry.scopePath : findScopePath(entry.sourceLine, scopes)
+    scopePath: findScopePath(entry.sourceLine, scopes)
   }));
 }
 
-export function findWordbookSelectionContext(
-  sourceLine: number,
-  sourceCode: string,
-  languageId: string,
-  scopeRegions?: WordbookScopeRegion[]
-): WordbookSelectionContext {
-  const scopes = scopeRegions?.length ? scopeRegions : collectScopeRegions(sourceCode, languageId);
-  const scopePath = findScopePath(sourceLine, scopes);
-  const currentClassScope = scopePath?.find((segment) => segment.startsWith("class "));
-  const currentFunctionScope = [...(scopePath ?? [])]
-    .reverse()
-    .find((segment) => segment.startsWith("function "));
-
-  return {
-    scopePath,
-    currentClassScope,
-    currentFunctionScope
-  };
-}
-
-export function collectScopeRegions(sourceCode: string, languageId: string): WordbookScopeRegion[] {
+function collectScopeRegions(sourceCode: string, languageId: string): ScopeRegion[] {
   const lines = sourceCode.split(/\r?\n/);
 
   if (languageId === "python") {
@@ -86,7 +59,7 @@ export function collectScopeRegions(sourceCode: string, languageId: string): Wor
   return collectBraceScopeRegions(lines);
 }
 
-function collectPythonScopeRegions(lines: string[]): WordbookScopeRegion[] {
+function collectPythonScopeRegions(lines: string[]): ScopeRegion[] {
   const scopes: PythonScopeRegion[] = [];
   const stack: PythonScopeRegion[] = [];
 
@@ -139,7 +112,7 @@ function collectPythonScopeRegions(lines: string[]): WordbookScopeRegion[] {
   return scopes;
 }
 
-function collectBraceScopeRegions(lines: string[]): WordbookScopeRegion[] {
+function collectBraceScopeRegions(lines: string[]): ScopeRegion[] {
   const scopes: BraceScopeRegion[] = [];
   const stack: BraceScopeRegion[] = [];
   let braceDepth = 0;
@@ -294,15 +267,12 @@ function matchBraceScope(
   };
 }
 
-function findScopePath(
-  sourceLine: number,
-  scopes: WordbookScopeRegion[]
-): string[] | undefined {
+function findScopePath(sourceLine: number, scopes: ScopeRegion[]): string[] | undefined {
   if (sourceLine <= 0) {
     return undefined;
   }
 
-  let matchedScope: WordbookScopeRegion | undefined;
+  let matchedScope: ScopeRegion | undefined;
 
   for (const scope of scopes) {
     if (scope.startLine <= sourceLine && sourceLine <= scope.endLine) {

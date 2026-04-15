@@ -8,12 +8,7 @@ import {
   buildPreprocessCandidates,
   getPreprocessTargetSelectionCount
 } from "../analysis/preprocess";
-import {
-  extractGlossaryEntries,
-  mergeGeneratedGlossaryEntries
-} from "../analysis/glossary";
-import { buildDocumentStructureFromSymbols } from "../analysis/documentStructure";
-import { extractTypeScriptAstGlossaryEntries } from "../analysis/typeScriptAstGlossary";
+import { extractGlossaryEntries } from "../analysis/glossary";
 import { attachWordbookScopePaths } from "../analysis/wordbook";
 import {
   buildFileOverviewSummary,
@@ -22,10 +17,7 @@ import {
 } from "../analysis/summary";
 import { getOfficialDocsPreset } from "../knowledge/officialDocs";
 import { KnowledgeStore } from "../knowledge/knowledgeStore";
-import {
-  PreprocessStore,
-  PREPROCESS_CACHE_BUILDER_VERSION
-} from "../knowledge/preprocessStore";
+import { PreprocessStore } from "../knowledge/preprocessStore";
 import {
   buildCachedPreprocessExplanation,
   buildSymbolPreprocessCache
@@ -86,142 +78,6 @@ test("extractGlossaryEntries includes python member function references", () => 
 
   assert.ok(glossaryEntries.some((entry) => entry.term === "squeeze" && entry.category === "function"));
   assert.ok(glossaryEntries.some((entry) => entry.term === "forward" && entry.category === "function"));
-});
-
-test("extractGlossaryEntries includes qualified call symbols", () => {
-  const sourceCode = [
-    "self.m_k = nn.Parameter(torch.empty(1, self.m, inner_dim))"
-  ].join("\n");
-  const glossaryEntries = extractGlossaryEntries(sourceCode, "python");
-
-  assert.ok(glossaryEntries.some((entry) => entry.term === "Parameter" && entry.category === "class"));
-  assert.ok(glossaryEntries.some((entry) => entry.term === "empty" && entry.category === "function"));
-});
-
-test("extractGlossaryEntries includes python decorator and aliased import usage", () => {
-  const sourceCode = [
-    "from project.decorators import cached as use_cache",
-    "@use_cache",
-    "def build_model():",
-    "    return factory()"
-  ].join("\n");
-  const glossaryEntries = extractGlossaryEntries(sourceCode, "python");
-
-  assert.ok(glossaryEntries.some((entry) => entry.term === "use_cache" && entry.category === "function"));
-});
-
-test("typescript AST extraction includes aliased imports, decorators, and chained external calls", () => {
-  const entries = extractTypeScriptAstGlossaryEntries(
-    [
-      "import { observer as mobxObserver } from 'mobx-react-lite';",
-      "import * as tf from '@tensorflow/tfjs';",
-      "import QueryClient from '@tanstack/query-core';",
-      "@mobxObserver",
-      "class Store {}",
-      "const layer = tf.layers.dense({ units: 32 });",
-      "const client = new QueryClient();"
-    ].join("\n"),
-    "typescript"
-  );
-
-  assert.ok(entries.some((entry) => entry.term === "mobxObserver" && entry.category === "function"));
-  assert.ok(entries.some((entry) => entry.term === "dense" && entry.category === "function"));
-  assert.ok(entries.some((entry) => entry.term === "QueryClient" && entry.category === "class"));
-});
-
-test("mergeGeneratedGlossaryEntries prefers local origin and keeps scope path", () => {
-  const mergedEntries = mergeGeneratedGlossaryEntries(
-    [
-      {
-        term: "forward",
-        normalizedTerm: "forward",
-        meaning: "External symbol.",
-        category: "function",
-        sourceLine: 12,
-        references: 1,
-        source: "generated",
-        symbolOrigin: "external",
-        updatedAt: new Date().toISOString()
-      }
-    ],
-    [
-      {
-        term: "forward",
-        normalizedTerm: "forward",
-        meaning: "Local function.",
-        category: "function",
-        sourceLine: 8,
-        references: 2,
-        source: "generated",
-        symbolOrigin: "local",
-        scopePath: ["class SpectralNet", "function forward"],
-        updatedAt: new Date().toISOString()
-      }
-    ]
-  );
-
-  assert.equal(mergedEntries.length, 1);
-  assert.equal(mergedEntries[0]?.symbolOrigin, "local");
-  assert.deepEqual(mergedEntries[0]?.scopePath, ["class SpectralNet", "function forward"]);
-  assert.equal(mergedEntries[0]?.references, 3);
-});
-
-test("buildDocumentStructureFromSymbols creates glossary entries and scope regions", () => {
-  const result = buildDocumentStructureFromSymbols([
-    {
-      name: "SpectralNet",
-      category: "class",
-      startLine: 1,
-      endLine: 20,
-      sourceLine: 1,
-      children: [
-        {
-          name: "__init__",
-          category: "function",
-          startLine: 2,
-          endLine: 6,
-          sourceLine: 2,
-          children: [
-            {
-              name: "hidden_size",
-              category: "variable",
-              startLine: 3,
-              endLine: 3,
-              sourceLine: 3,
-              children: []
-            }
-          ]
-        }
-      ]
-    }
-  ]);
-
-  assert.ok(result.glossaryEntries.some((entry) => entry.term === "SpectralNet"));
-  assert.ok(
-    result.glossaryEntries.some(
-      (entry) =>
-        entry.term === "hidden_size" &&
-        entry.symbolOrigin === "local" &&
-        JSON.stringify(entry.scopePath) ===
-          JSON.stringify(["class SpectralNet", "function __init__"])
-    )
-  );
-  assert.deepEqual(result.scopeRegions, [
-    {
-      label: "class SpectralNet",
-      kind: "class",
-      startLine: 1,
-      endLine: 20,
-      path: ["class SpectralNet"]
-    },
-    {
-      label: "function __init__",
-      kind: "function",
-      startLine: 2,
-      endLine: 6,
-      path: ["class SpectralNet", "function __init__"]
-    }
-  ]);
 });
 
 test("attachWordbookScopePaths groups entries by class and function scope", () => {
@@ -420,41 +276,6 @@ test("preprocess candidate builder focuses on user-defined symbols", () => {
   assert.ok(expert.some((entry) => entry.term === "buildFeatureMap"));
 });
 
-test("preprocess candidate pool preserves origin and scope metadata", () => {
-  const candidates = buildPreprocessCandidatePool([
-    {
-      term: "featureMap",
-      normalizedTerm: "featuremap",
-      meaning: "Local variable.",
-      category: "variable",
-      sourceLine: 8,
-      references: 3,
-      source: "generated",
-      symbolOrigin: "local",
-      scopePath: ["class Encoder", "function forward"],
-      updatedAt: new Date().toISOString()
-    },
-    {
-      term: "Parameter",
-      normalizedTerm: "parameter",
-      meaning: "External API symbol.",
-      category: "class",
-      sourceLine: 4,
-      references: 2,
-      source: "generated",
-      symbolOrigin: "external",
-      updatedAt: new Date().toISOString()
-    }
-  ]);
-
-  const featureMap = candidates.find((entry) => entry.term === "featureMap");
-  const parameter = candidates.find((entry) => entry.term === "Parameter");
-
-  assert.equal(featureMap?.symbolOrigin, "local");
-  assert.deepEqual(featureMap?.scopePath, ["class Encoder", "function forward"]);
-  assert.equal(parameter?.symbolOrigin, "external");
-});
-
 test("preprocess store reads back file-scoped cache entries", async () => {
   const workspaceRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "rcic-preprocess-store-")
@@ -467,7 +288,6 @@ test("preprocess store reads back file-scoped cache entries", async () => {
     languageId: "typescript",
     relativeFilePath: "src/example.ts",
     sourceHash: "hash-1",
-    builderVersion: PREPROCESS_CACHE_BUILDER_VERSION,
     generatedAt: new Date().toISOString(),
     entries: [
       {
@@ -484,38 +304,6 @@ test("preprocess store reads back file-scoped cache entries", async () => {
   const cached = await preprocessStore.findEntry("src/example.ts", "hash-1", "featureMap");
 
   assert.equal(cached?.summary, "Stores the processed feature mapping.");
-  await fs.rm(workspaceRoot, { recursive: true, force: true });
-});
-
-test("preprocess store ignores outdated builder versions", async () => {
-  const workspaceRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), "rcic-preprocess-store-version-")
-  );
-  const store = new WorkspaceStore(workspaceRoot);
-  await store.ensureProjectDataDirectories();
-  const preprocessStore = new PreprocessStore(store);
-
-  await preprocessStore.write("src/example.ts", {
-    languageId: "typescript",
-    relativeFilePath: "src/example.ts",
-    sourceHash: "hash-1",
-    builderVersion: PREPROCESS_CACHE_BUILDER_VERSION - 1,
-    generatedAt: new Date().toISOString(),
-    entries: [
-      {
-        term: "featureMap",
-        normalizedTerm: "featuremap",
-        category: "variable",
-        sourceLine: 3,
-        summary: "stale entry",
-        generatedAt: new Date().toISOString()
-      }
-    ]
-  });
-
-  const cached = await preprocessStore.findEntry("src/example.ts", "hash-1", "featureMap");
-
-  assert.equal(cached, undefined);
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 
@@ -758,7 +546,6 @@ test("symbol preprocess builder ignores placeholder cache entries", async () => 
     languageId: "typescript",
     relativeFilePath: "src/example.ts",
     sourceHash,
-    builderVersion: PREPROCESS_CACHE_BUILDER_VERSION,
     generatedAt: new Date().toISOString(),
     entries: [
       {
