@@ -972,3 +972,18 @@
 - Verification:
   - `cmd /c npm.cmd run compile`
   - `cmd /c npm.cmd test`
+
+### S24-01 Fix panel settings navigation and preprocess visibility
+
+- Stage: 24
+- Result: Made the explanation-panel `Settings` control foreground-safe with a command-URI path plus non-preserve-focus settings reveals, and brought the explanation panel forward for user-triggered preprocessing while adding clearer preprocess status text to the explain page.
+- Files:
+  - `src/ui/explanationPanel.ts`
+  - `src/ui/settingsPanel.ts`
+  - `src/extension.ts`
+  - `docs/project/WORKBOARD.md`
+  - `docs/project/COMPLETION_LOG.md`
+  - `docs/project/summaries/2026-04-15-stage-24.md`
+- Verification:
+  - `cmd /c npm.cmd run compile`
+  - `cmd /c npm.cmd test`

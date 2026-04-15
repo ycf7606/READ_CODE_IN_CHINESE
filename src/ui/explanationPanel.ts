@@ -48,9 +48,9 @@ export class ExplanationPanel implements vscode.Disposable {
     private readonly onMessage: (message: PanelMessage) => Promise<void>
   ) {}
 
-  show(): void {
+  show(preserveFocus = true): void {
     if (this.panel) {
-      this.panel.reveal(vscode.ViewColumn.Beside, true);
+      this.panel.reveal(vscode.ViewColumn.Beside, preserveFocus);
       this.postState();
       return;
     }
@@ -60,11 +60,12 @@ export class ExplanationPanel implements vscode.Disposable {
       "Read Code In Chinese",
       {
         viewColumn: vscode.ViewColumn.Beside,
-        preserveFocus: true
+        preserveFocus
       },
       {
         enableScripts: true,
-        retainContextWhenHidden: true
+        retainContextWhenHidden: true,
+        enableCommandUris: true
       }
     );
 
@@ -367,6 +368,12 @@ export class ExplanationPanel implements vscode.Disposable {
         background: var(--vscode-button-secondaryHoverBackground);
       }
 
+      .chip-link {
+        display: inline-flex;
+        align-items: center;
+        text-decoration: none;
+      }
+
       .list {
         display: grid;
         gap: 8px;
@@ -593,7 +600,7 @@ export class ExplanationPanel implements vscode.Disposable {
             <div class="title">Read Code In Chinese</div>
             <div class="header-actions">
               <div id="loadingSpinner" class="spinner"></div>
-              <button class="chip" id="settingsButton" type="button">Settings</button>
+              <a class="chip chip-link" id="settingsButton" href="command:readCodeInChinese.openSettingsPanel">Settings</a>
               <div id="watchBadge" class="badge">Manual</div>
             </div>
           </div>
@@ -625,6 +632,7 @@ export class ExplanationPanel implements vscode.Disposable {
             <div>
               <div class="label">Preprocessing</div>
               <div class="progress-wrap">
+                <div id="preprocessSummary" class="muted"></div>
                 <div id="preprocessMeta" class="meta"></div>
                 <div class="progress-bar"><div id="preprocessFill" class="progress-fill"></div></div>
               </div>
@@ -715,6 +723,7 @@ export class ExplanationPanel implements vscode.Disposable {
       const summary = document.getElementById("summary");
       const engineInfo = document.getElementById("engineInfo");
       const detectedType = document.getElementById("detectedType");
+      const preprocessSummary = document.getElementById("preprocessSummary");
       const preprocessMeta = document.getElementById("preprocessMeta");
       const preprocessFill = document.getElementById("preprocessFill");
       const wordbookPreprocessMeta = document.getElementById("wordbookPreprocessMeta");
@@ -1367,12 +1376,24 @@ export class ExplanationPanel implements vscode.Disposable {
 
       function renderPreprocess(progress) {
         const lines = [];
+        let summaryLine = "Preprocessing has not started for the current file.";
         let percentage = 0;
 
         if (progress) {
           const candidatePoolCount = progress.candidatePoolCount || progress.totalCandidates;
           const selectingStep = (progress.currentStep || "").toLowerCase().includes("select");
           const preparingStep = (progress.currentStep || "").toLowerCase().includes("prepar");
+
+          summaryLine =
+            progress.status === "running"
+              ? "Preprocessing is running for the current file."
+              : progress.status === "completed"
+                ? "Preprocessing is complete for the current file."
+                : progress.status === "failed"
+                  ? "Preprocessing failed for the current file."
+                  : progress.status === "canceled"
+                    ? "Preprocessing was canceled for the current file."
+                    : "Preprocessing state is available for the current file.";
 
           if (selectingStep) {
             lines.push("Candidate pool: " + candidatePoolCount);
@@ -1410,6 +1431,7 @@ export class ExplanationPanel implements vscode.Disposable {
           lines.push("Preprocessing has not started for the current file.");
         }
 
+        preprocessSummary.textContent = summaryLine;
         preprocessMeta.innerHTML = lines.map((line) => '<div>' + line + '</div>').join("");
         preprocessFill.style.width = percentage + "%";
         wordbookPreprocessMeta.innerHTML = preprocessMeta.innerHTML;
@@ -1503,7 +1525,9 @@ export class ExplanationPanel implements vscode.Disposable {
       });
 
       settingsButton.addEventListener("click", () => {
-        vscode.postMessage({ type: "openSettings" });
+        setTimeout(() => {
+          vscode.postMessage({ type: "openSettings" });
+        }, 0);
       });
 
       explainTabButton.addEventListener("click", () => {

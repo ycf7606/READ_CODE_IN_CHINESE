@@ -126,7 +126,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     if (message.type === "openSettings") {
-      settingsPanel.show(getSettings());
+      logger.info("Settings panel requested from explanation panel");
+      settingsPanel.show(getSettings(), false);
       return;
     }
 
@@ -149,11 +150,12 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   const settingsPanel = new SettingsPanel(async (message) => {
     if (message.type === "ready") {
-      settingsPanel.show(getSettings());
+      settingsPanel.show(getSettings(), false);
       return;
     }
 
     if (message.type === "runPreprocess") {
+      panel.show(false);
       await runPreprocessForActiveEditor(true);
       return;
     }
@@ -234,7 +236,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (message.type === "saveSettings") {
       await saveSettingsFromPanel(message.payload);
-      settingsPanel.show(getSettings());
+      settingsPanel.show(getSettings(), false);
       settingsPanel.setStatusMessage("Settings saved.");
       logger.info("Settings updated from settings panel", summarizeSettings(getSettings()));
     }
@@ -332,7 +334,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       "readCodeInChinese.openSettingsPanel",
       () => {
-        settingsPanel.show(getSettings());
+        settingsPanel.show(getSettings(), false);
       }
     ),
     vscode.commands.registerCommand(
@@ -491,7 +493,7 @@ export function activate(context: vscode.ExtensionContext): void {
   if (!context.globalState.get<boolean>("readCodeInChinese.onboardingShown")) {
     void context.globalState.update("readCodeInChinese.onboardingShown", true);
     setTimeout(() => {
-      settingsPanel.show(getSettings());
+      settingsPanel.show(getSettings(), false);
     }, 250);
   }
 

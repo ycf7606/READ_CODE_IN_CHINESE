@@ -66,14 +66,14 @@ export class SettingsPanel implements vscode.Disposable {
     private readonly onMessage: (message: SettingsMessage) => Promise<void>
   ) {}
 
-  show(settings: ExtensionSettings): void {
+  show(settings: ExtensionSettings, preserveFocus = false): void {
     this.state = {
       settings,
       statusMessage: this.state?.statusMessage
     };
 
     if (this.panel) {
-      this.panel.reveal(vscode.ViewColumn.Beside, true);
+      this.panel.reveal(vscode.ViewColumn.Beside, preserveFocus);
       this.postState();
       return;
     }
@@ -83,7 +83,7 @@ export class SettingsPanel implements vscode.Disposable {
       "Read Code In Chinese Settings",
       {
         viewColumn: vscode.ViewColumn.Beside,
-        preserveFocus: true
+        preserveFocus
       },
       {
         enableScripts: true,
