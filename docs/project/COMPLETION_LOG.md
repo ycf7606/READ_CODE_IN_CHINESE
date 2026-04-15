@@ -959,3 +959,16 @@
   - `docs/project/summaries/2026-04-15-stage-22.md`
 - Verification:
   - `cmd /c npm.cmd test`
+
+### S23-01 Isolate source-editor state and stabilize auto explain
+
+- Stage: 23
+- Result: Stopped output/log editors from replacing the tracked source editor, prevented same-selection auto-explain churn with scheduled/active/settled signatures, and routed source-dependent commands through the last valid source editor.
+- Files:
+  - `src/extension.ts`
+  - `docs/project/WORKBOARD.md`
+  - `docs/project/COMPLETION_LOG.md`
+  - `docs/project/summaries/2026-04-15-stage-23.md`
+- Verification:
+  - `cmd /c npm.cmd run compile`
+  - `cmd /c npm.cmd test`

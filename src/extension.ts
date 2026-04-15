@@ -97,8 +97,12 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   let autoExplainTimeout: NodeJS.Timeout | undefined;
   let preprocessTimeout: NodeJS.Timeout | undefined;
-  let trackedSourceEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
+  let trackedSourceEditor: vscode.TextEditor | undefined;
   let lastAutoExplainSignature = "";
+  let scheduledAutoExplainSignature: string | undefined;
+  let activeAutoExplainSignature: string | undefined;
+  let lastSettledAutoExplainSignature: string | undefined;
+  let lastSettledAutoExplainAt = 0;
   let explainTaskVersion = 0;
   let followUpTaskVersion = 0;
   let preprocessTaskVersion = 0;
@@ -247,6 +251,10 @@ export function activate(context: vscode.ExtensionContext): void {
   logger.info("Extension activated");
   logger.info("Effective settings", summarizeSettings(getSettings()));
 
+  if (isTrackableSourceEditor(vscode.window.activeTextEditor)) {
+    trackedSourceEditor = vscode.window.activeTextEditor;
+  }
+
   const registeredCommands = [
     vscode.commands.registerCommand(
       "readCodeInChinese.explainSelection",
@@ -268,9 +276,9 @@ export function activate(context: vscode.ExtensionContext): void {
       "readCodeInChinese.openConversationPanel",
       async () => {
         panel.show();
-        syncPanelContext(vscode.window.activeTextEditor);
+        syncPanelContext(getPreferredSourceEditor());
 
-        if (hasNonEmptySelection(vscode.window.activeTextEditor)) {
+        if (hasNonEmptySelection(getPreferredSourceEditor())) {
           await explainSelection("auto", {
             showProgress: false,
             showWarnings: false,
@@ -356,10 +364,36 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
+      if (!isTrackableSourceEditor(editor)) {
+        logger.info("Ignored non-source active editor change", {
+          filePath: editor.document.uri.fsPath,
+          languageId: editor.document.languageId,
+          scheme: editor.document.uri.scheme
+        });
+        syncPanelContext(getPreferredSourceEditor());
+        return;
+      }
+
+      const previousSourceEditor = trackedSourceEditor;
+      const isSameSourceDocument =
+        previousSourceEditor?.document.uri.toString() === editor.document.uri.toString();
+
       trackedSourceEditor = editor;
+
+      if (isSameSourceDocument) {
+        logger.info("Tracked source editor changed without source document change", {
+          filePath: editor.document.uri.fsPath,
+          languageId: editor.document.languageId
+        });
+        syncPanelContext(editor);
+        await refreshWordbookForEditor(editor);
+        return;
+      }
+
       cancelExplainTask("Active editor changed");
       cancelFollowUpTask("Active editor changed");
       cancelPreprocessTask("Active editor changed");
+      clearAutoExplainState();
       logger.info("Active editor changed", {
         filePath: editor?.document.uri.fsPath,
         languageId: editor?.document.languageId
@@ -370,7 +404,7 @@ export function activate(context: vscode.ExtensionContext): void {
       schedulePreprocessForActiveEditor();
     }),
     vscode.workspace.onDidSaveTextDocument(async (document) => {
-      if (vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString()) {
+      if (getPreferredSourceEditor()?.document.uri.toString() === document.uri.toString()) {
         logger.info("Active document saved", {
           filePath: document.uri.fsPath
         });
@@ -383,6 +417,10 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.window.onDidChangeTextEditorSelection(async (event) => {
+      if (!isTrackableSourceEditor(event.textEditor)) {
+        return;
+      }
+
       trackedSourceEditor = event.textEditor;
       syncPanelContext(event.textEditor);
       recordSelectionFocus(event.textEditor, event.textEditor.selection);
@@ -419,14 +457,28 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
+      const now = Date.now();
+
+      if (signature === scheduledAutoExplainSignature || signature === activeAutoExplainSignature) {
+        return;
+      }
+
+      if (
+        signature === lastSettledAutoExplainSignature &&
+        now - lastSettledAutoExplainAt < Math.max(1500, getSettings().autoExplainDelayMs * 2)
+      ) {
+        return;
+      }
+
       lastAutoExplainSignature = signature;
+      scheduledAutoExplainSignature = signature;
       clearTimeout(autoExplainTimeout);
       autoExplainTimeout = setTimeout(() => {
         void explainSelection("auto", {
           showProgress: false,
           showWarnings: false,
           revealPanel: false
-        });
+        }, signature);
       }, getSettings().autoExplainDelayMs);
     })
   );
@@ -497,7 +549,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (activePreprocessTask) {
       const relativeFilePath =
         sessionState.preprocessProgress?.relativeFilePath ??
-        getRelativeFilePath(vscode.window.activeTextEditor);
+        getRelativeFilePath(getPreferredSourceEditor());
       logger.info("Canceled preprocess task", { reason, version: activePreprocessTask.version });
       activePreprocessTask.controller.abort();
       activePreprocessTask = undefined;
@@ -518,7 +570,7 @@ export function activate(context: vscode.ExtensionContext): void {
       panel.setState({
         preprocessProgress: getVisiblePreprocessProgress(
           sessionState.preprocessProgress,
-          vscode.window.activeTextEditor
+          getPreferredSourceEditor()
         )
       });
     }
@@ -551,7 +603,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   async function explainSelection(
     reason: "manual" | "auto",
-    options: ExplainSelectionOptions
+    options: ExplainSelectionOptions,
+    autoSignature?: string
   ): Promise<void> {
     const editor = getPreferredSourceEditor();
 
@@ -579,6 +632,18 @@ export function activate(context: vscode.ExtensionContext): void {
         options
       );
       return;
+    }
+
+    if (reason === "auto" && autoSignature) {
+      if (scheduledAutoExplainSignature === autoSignature) {
+        scheduledAutoExplainSignature = undefined;
+      }
+
+      if (activeAutoExplainSignature === autoSignature) {
+        return;
+      }
+
+      activeAutoExplainSignature = autoSignature;
     }
 
     cancelFollowUpTask("New selection explanation started");
@@ -782,6 +847,12 @@ export function activate(context: vscode.ExtensionContext): void {
             if (isTaskCurrent("explain", task.version)) {
               activeExplainTask = undefined;
             }
+
+            if (reason === "auto" && autoSignature) {
+              activeAutoExplainSignature = undefined;
+              lastSettledAutoExplainSignature = autoSignature;
+              lastSettledAutoExplainAt = Date.now();
+            }
           }
         }
       );
@@ -811,11 +882,17 @@ export function activate(context: vscode.ExtensionContext): void {
       if (isTaskCurrent("explain", task.version)) {
         activeExplainTask = undefined;
       }
+
+      if (reason === "auto" && autoSignature) {
+        activeAutoExplainSignature = undefined;
+        lastSettledAutoExplainSignature = autoSignature;
+        lastSettledAutoExplainAt = Date.now();
+      }
     }
   }
 
   async function explainCurrentFile(): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
+    const editor = getPreferredSourceEditor();
 
     if (!editor) {
       await vscode.window.showWarningMessage(
@@ -894,7 +971,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   async function generateWorkspaceIndex(): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
+    const editor = getPreferredSourceEditor();
 
     if (!editor) {
       await vscode.window.showWarningMessage(
@@ -958,7 +1035,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   async function refreshGlossaryForActiveEditor(forceRefresh: boolean): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
+    const editor = getPreferredSourceEditor();
 
     if (!editor) {
       glossaryTreeProvider.setEntries([]);
@@ -1005,7 +1082,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   async function editGlossaryEntry(entry?: GlossaryEntry): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
+    const editor = getPreferredSourceEditor();
 
     if (!editor || !entry) {
       return;
@@ -1084,7 +1161,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   async function importKnowledgeDocuments(): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
+    const editor = getPreferredSourceEditor();
 
     if (!editor) {
       await vscode.window.showWarningMessage(
@@ -1135,7 +1212,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   async function syncOfficialDocsForActiveEditorLanguage(): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
+    const editor = getPreferredSourceEditor();
 
     if (!editor) {
       await vscode.window.showWarningMessage(
@@ -1687,7 +1764,42 @@ export function activate(context: vscode.ExtensionContext): void {
   function getPreferredSourceEditor(
     editor?: vscode.TextEditor
   ): vscode.TextEditor | undefined {
-    return editor ?? vscode.window.activeTextEditor ?? trackedSourceEditor;
+    if (editor && isTrackableSourceEditor(editor)) {
+      return editor;
+    }
+
+    if (vscode.window.activeTextEditor && isTrackableSourceEditor(vscode.window.activeTextEditor)) {
+      return vscode.window.activeTextEditor;
+    }
+
+    if (trackedSourceEditor && isTrackableSourceEditor(trackedSourceEditor)) {
+      return trackedSourceEditor;
+    }
+
+    return undefined;
+  }
+
+  function isTrackableSourceEditor(editor: vscode.TextEditor | undefined): boolean {
+    if (!editor || editor.document.uri.scheme !== "file") {
+      return false;
+    }
+
+    const projectContext = getProjectContext(editor.document);
+
+    if (!projectContext) {
+      return false;
+    }
+
+    return isSupportedWorkspaceFile(projectContext.relativeFilePath);
+  }
+
+  function clearAutoExplainState(): void {
+    clearTimeout(autoExplainTimeout);
+    scheduledAutoExplainSignature = undefined;
+    activeAutoExplainSignature = undefined;
+    lastAutoExplainSignature = "";
+    lastSettledAutoExplainSignature = undefined;
+    lastSettledAutoExplainAt = 0;
   }
 
   function recordSelectionFocus(

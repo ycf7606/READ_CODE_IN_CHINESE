@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 22
-- Latest summary: `docs/project/summaries/2026-04-15-stage-22.md`
+- Latest completed milestone: Stage 23
+- Latest summary: `docs/project/summaries/2026-04-15-stage-23.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -47,6 +47,7 @@ Every future work session must read these files in order before making changes:
 | 20 | Selection-focused explanation polish | Completed | Qualified-call API symbol extraction, top-of-page selection focus, markdown rendering, and glossary snapshot removal |
 | 21 | LSP-aware wordbook structure | Completed | Hybrid LSP glossary extraction, local/API wordbook layers, search/scope filters, and per-file expand-state persistence |
 | 22 | Panel recovery and scalable extraction | Completed | Webview script hardening, preprocess cache versioning, TS AST external extraction, Python alias/decorator coverage, and near-selection wordbook filtering |
+| 23 | Source editor isolation and auto-explain stabilization | Completed | Ignored output/log editors, preserved tracked source context, and deduplicated repeated auto-explain requests |
 
 ## Completed Tasks
 
@@ -162,6 +163,10 @@ Every future work session must read these files in order before making changes:
 - [x] S22-03 Add TypeScript AST-backed external symbol extraction for aliased imports, decorators, chained calls, and imported constructors.
 - [x] S22-04 Expand Python external symbol coverage for aliased imports, decorators, and direct imported-alias calls.
 - [x] S22-05 Add large-wordbook mitigation with lazy tree rendering and a `Near selection` scope filter, then produce the Stage 22 summary file.
+- [x] S23-01 Stop non-source editors such as output/log buffers from replacing the tracked source editor or canceling live explanation/preprocess tasks.
+- [x] S23-02 Deduplicate auto-explain requests for the same selection so repeated selection events no longer churn versions and abort each other.
+- [x] S23-03 Route file-scoped commands and refresh paths through the preferred tracked source editor when focus moves away from code.
+- [x] S23-04 Compile, run tests, and publish the Stage 23 summary plus tracking updates.
 
 ## Current Todo
 
@@ -192,6 +197,7 @@ Every future work session must read these files in order before making changes:
 - A Stage 20 update widened preprocessing to qualified API call symbols, highlighted the current selection at the top of the explanation page, added basic markdown rendering, and removed the now-unused glossary snapshot block.
 - A Stage 21 update moved glossary generation to a hybrid regex + LSP structure pipeline, carried symbol origin/scope metadata through the wordbook cache, and upgraded the wordbook tab into a layered searchable tree with per-file persisted expand state.
 - A Stage 22 update hardened the panel webview against script regressions, versioned preprocess caches, added TS AST-backed external extraction plus deeper Python alias/decorator coverage, and reduced large-wordbook rendering cost with lazy tree hydration and near-selection filtering.
+- A Stage 23 update isolated tracked source-editor state from output/log editors and tightened auto-explain deduplication so repeated same-selection requests stop canceling each other while logs or panels are open.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.
