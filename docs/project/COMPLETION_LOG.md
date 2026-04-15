@@ -1002,3 +1002,17 @@
 - Verification:
   - `cmd /c npm.cmd run compile`
   - `cmd /c npm.cmd test`
+
+### S29-01 Harden Stage 19 preprocess against mid-run remote batch failures
+
+- Stage: 29
+- Result: Diagnosed that Stage 19 preprocessing could stop halfway because each remote wordbook chunk was required to succeed; added per-chunk local fallback so a non-abort remote failure no longer aborts the full job, and verified the mixed remote/local path with a regression test.
+- Files:
+  - `src/knowledge/symbolPreprocessBuilder.ts`
+  - `src/test/index.test.ts`
+  - `docs/project/WORKBOARD.md`
+  - `docs/project/COMPLETION_LOG.md`
+  - `docs/project/summaries/2026-04-15-stage-29.md`
+- Verification:
+  - `cmd /c npm.cmd run compile`
+  - `cmd /c npm.cmd test`

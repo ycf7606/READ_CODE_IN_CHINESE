@@ -19,6 +19,7 @@ import {
 } from "../analysis/preprocess";
 import { ExtensionLogger } from "../logging/logger";
 import { generatePreprocessAudiencePrompt } from "../prompts/globalPromptProfile";
+import { LocalExplanationProvider } from "../providers/localProvider";
 import { ExplanationProvider } from "../providers/providerTypes";
 import { WorkspaceStore } from "../storage/workspaceStore";
 import { createContentHash } from "../utils/hash";
@@ -193,7 +194,8 @@ export async function buildSymbolPreprocessCache(
   const mergedEntries = new Map(cachedEntries.map((entry) => [entry.normalizedTerm, entry]));
   let remainingCandidates = [...missingCandidates];
   let processedBatches = 0;
-  let responseSource = options.provider.id;
+  let responseSource: string | undefined;
+  const localFallbackProvider = new LocalExplanationProvider(options.logger);
 
   while (remainingCandidates.length > 0) {
     const nextChunk = takeNextPreprocessChunk(
@@ -220,13 +222,33 @@ export async function buildSymbolPreprocessCache(
       )
     );
 
-    const response = await options.provider.preprocessSymbols(
-      buildChunkRequest(options, nextChunk, sourceHash),
-      {
+    const chunkRequest = buildChunkRequest(options, nextChunk, sourceHash);
+    let response;
+
+    try {
+      response = await options.provider.preprocessSymbols(chunkRequest, {
         signal: options.signal
+      });
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        throw error;
       }
-    );
-    responseSource = response.source;
+
+      options.logger?.warn("Remote preprocess batch failed, using local fallback", {
+        relativeFilePath: options.relativeFilePath,
+        batchNumber: processedBatches + 1,
+        batchCount: totalBatchCount,
+        candidateCount: nextChunk.length,
+        error: error instanceof Error ? error.message : String(error)
+      });
+
+      if (options.signal?.aborted) {
+        throw new Error("Request aborted");
+      }
+
+      response = await localFallbackProvider.preprocessSymbols(chunkRequest);
+    }
+    responseSource = mergeResponseSourceLabel(responseSource, response.source);
 
     const normalizedChunkEntries = normalizePreprocessEntries(nextChunk, response.entries);
 
@@ -301,7 +323,7 @@ export async function buildSymbolPreprocessCache(
     selectedCount: selectedCandidates.length,
     batchCount: totalBatchCount,
     symbolCount: cacheFile.entries.length,
-    source: options.provider.id
+    source: responseSource ?? options.provider.id
   });
 
   options.onProgress?.(
@@ -325,7 +347,7 @@ export async function buildSymbolPreprocessCache(
   return {
     cacheFile,
     candidates: selectedCandidates,
-    source: responseSource
+    source: responseSource ?? options.provider.id
   };
 }
 
@@ -683,4 +705,12 @@ function isAbortLikeError(error: unknown): boolean {
   }
 
   return false;
+}
+
+function mergeResponseSourceLabel(current: string | undefined, next: string): string {
+  if (!current) {
+    return next;
+  }
+
+  return current === next ? current : "mixed";
 }

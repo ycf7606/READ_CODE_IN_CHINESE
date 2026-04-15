@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 28
-- Latest summary: `docs/project/summaries/2026-04-15-stage-28.md`
+- Latest completed milestone: Stage 29
+- Latest summary: `docs/project/summaries/2026-04-15-stage-29.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -49,6 +49,7 @@ Every future work session must read these files in order before making changes:
 | 22 | Panel recovery and scalable extraction | Completed | Webview script hardening, preprocess cache versioning, TS AST external extraction, Python alias/decorator coverage, and near-selection wordbook filtering |
 | 27 | Rollback to stable Stage 22 baseline | Completed | Reverted unstable post-Stage-22 panel state changes, verified the Stage 22 baseline, and documented a new reimplementation route |
 | 28 | Rollback to stable Stage 19 baseline | Completed | Pulled the Stage 19 code snapshot directly, removed Current Selection-era changes, and documented a safer rebuild route for Stage 20-22 capabilities |
+| 29 | Stage 19 preprocess reliability hardening | Completed | Added per-batch local fallback so remote preprocess failures no longer stop the whole wordbook job |
 
 ## Completed Tasks
 
@@ -172,6 +173,10 @@ Every future work session must read these files in order before making changes:
 - [x] S28-02 Pull the Stage 19 code snapshot directly from git history instead of layering more revert logic on top of the current runtime state.
 - [x] S28-03 Verify the restored Stage 19 baseline with compile and test.
 - [x] S28-04 Document the Stage 20-22 feature delta and a replacement route for rebuilding those capabilities without reintroducing the unstable Current Selection-era code.
+- [x] S29-01 Diagnose the Stage 19 preprocess freeze and confirm that a single failed remote chunk aborts the full job.
+- [x] S29-02 Add per-chunk local fallback so preprocessing continues after a non-abort remote batch failure.
+- [x] S29-03 Add regression coverage for mixed remote/local chunk completion and verify compile plus tests.
+- [x] S29-04 Produce the Stage 29 summary file.
 
 ## Current Todo
 
@@ -213,6 +218,7 @@ Every future work session must read these files in order before making changes:
 - Stage 27 intentionally rolls the codebase back to the Stage 22 baseline because the post-Stage-22 fixes concentrated too much runtime state management inside `src/extension.ts`, which made the panel, selection watch, and wordbook flows fragile under real VS Code focus changes.
 - Stage 28 moves the baseline back further to Stage 19 because Stage 20 introduced the Current Selection card and related explanation-surface changes, and the user confirmed all versions containing that UI line are unusable in practice.
 - The replacement route after Stage 28 is to rebuild only the needed Stage 20-22 capabilities on top of Stage 19, with a dedicated controller for panel/watch/preprocess orchestration and without reviving the Current Selection-era explanation surface.
+- A Stage 29 reliability fix keeps Stage 19 preprocessing moving even when one remote wordbook batch times out, returns empty content, or otherwise fails mid-run.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

@@ -529,6 +529,124 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 
+test("symbol preprocess builder falls back per chunk when a remote batch fails", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-symbol-preprocess-chunk-fallback-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const sourceCode = "export const ready = true;";
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "typescript");
+  const candidatePool = Array.from({ length: 41 }, (_, index) => ({
+    term: `symbol_${index}`,
+    normalizedTerm: `symbol_${index}`,
+    category: index % 2 === 0 ? "variable" : "function",
+    sourceLine: index + 1,
+    references: 2,
+    score: 100 - index
+  })) satisfies ReturnType<typeof buildPreprocessCandidatePool>;
+  let preprocessCallCount = 0;
+  const provider = {
+    id: "openai-compatible",
+    async explain() {
+      throw new Error("unused");
+    },
+    async answerFollowUp() {
+      return {
+        answer: "unused",
+        suggestedQuestions: [],
+        source: "openai-compatible",
+        latencyMs: 1
+      };
+    },
+    async selectPreprocessCandidates(request: {
+      requestId: string;
+      languageId: string;
+      candidatePool: Array<{ term: string }>;
+    }) {
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        selectedTerms: request.candidatePool.map((candidate) => candidate.term),
+        source: "openai-compatible",
+        latencyMs: 8
+      };
+    },
+    async preprocessSymbols(request: SymbolPreprocessRequest) {
+      preprocessCallCount += 1;
+
+      if (preprocessCallCount === 2) {
+        throw new Error("simulated remote chunk failure");
+      }
+
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        source: "openai-compatible",
+        latencyMs: 20,
+        entries: request.candidates.map((candidate) => ({
+          term: candidate.term,
+          normalizedTerm: candidate.normalizedTerm,
+          category: candidate.category,
+          sourceLine: candidate.sourceLine,
+          summary: candidate.term + " remote summary",
+          generatedAt: new Date().toISOString()
+        }))
+      };
+    }
+  };
+
+  const result = await buildSymbolPreprocessCache({
+    editorText: sourceCode,
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    settings: {
+      autoExplainEnabled: false,
+      autoExplainDelayMs: 600,
+      autoOpenPanel: true,
+      providerId: "openai-compatible",
+      providerBaseUrl: "https://example.com/v1",
+      providerModel: "gpt-5.4",
+      providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerTimeoutMs: 20000,
+      providerTemperature: 0.2,
+      providerTopP: 1,
+      providerMaxTokens: 1200,
+      providerReasoningEffort: "medium",
+      detailLevel: "balanced",
+      professionalLevel: "beginner",
+      occupation: "developer",
+      sections: ["summary", "usage"],
+      userGoal: "",
+      knowledgeTopK: 3,
+      customInstructions: ""
+    },
+    glossaryEntries,
+    candidatePool,
+    workspaceStore: store,
+    provider
+  });
+
+  assert.ok(result);
+  assert.equal(preprocessCallCount, 3);
+  assert.equal(result?.cacheFile.entries.length, 41);
+  assert.equal(result?.source, "mixed");
+  assert.match(
+    result?.cacheFile.entries.find((entry) => entry.term === "symbol_0")?.summary ?? "",
+    /remote summary/
+  );
+  assert.match(
+    result?.cacheFile.entries.find((entry) => entry.term === "symbol_20")?.summary ?? "",
+    /当前文件中的/
+  );
+  assert.match(
+    result?.cacheFile.entries.find((entry) => entry.term === "symbol_40")?.summary ?? "",
+    /remote summary/
+  );
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
+});
+
 test("symbol preprocess builder ignores placeholder cache entries", async () => {
   const workspaceRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "rcic-symbol-preprocess-placeholders-")
