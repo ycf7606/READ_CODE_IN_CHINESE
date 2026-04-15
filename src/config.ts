@@ -4,6 +4,7 @@ import {
   ExplanationSectionName,
   ExtensionSettings,
   Occupation,
+  ProviderEndpoint,
   ProviderId,
   ProfessionalLevel,
   ReasoningEffort
@@ -61,6 +62,11 @@ export function getSettings(): ExtensionSettings {
       "provider.apiKeyEnvVar",
       readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_API_KEY_ENV_VAR") ??
         "READ_CODE_IN_CHINESE_API_KEY"
+    ),
+    providerFallbacks: getConfiguredValue<ProviderEndpoint[]>(
+      configuration,
+      "provider.fallbacks",
+      parseProviderEndpoints(readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_FALLBACKS")) ?? []
     ),
     providerTimeoutMs: getConfiguredValue<number>(
       configuration,
@@ -191,4 +197,74 @@ function readStringArrayEnv(name: string): string[] | undefined {
     .filter(Boolean);
 
   return parsed.length ? parsed : undefined;
+}
+
+function parseProviderEndpoints(value: string | undefined): ProviderEndpoint[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return undefined;
+  }
+
+  if (trimmedValue.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmedValue);
+
+      if (Array.isArray(parsed)) {
+        const normalized = parsed
+          .map((entry) => normalizeProviderEndpoint(entry))
+          .filter((entry): entry is ProviderEndpoint => Boolean(entry));
+
+        return normalized.length ? normalized : undefined;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  const normalized = trimmedValue
+    .split(/\r?\n|;/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [baseUrl = "", apiKeyEnvVar = "", model = ""] = line
+        .split("|")
+        .map((part) => part.trim());
+
+      return normalizeProviderEndpoint({ baseUrl, apiKeyEnvVar, model });
+    })
+    .filter((entry): entry is ProviderEndpoint => Boolean(entry));
+
+  return normalized.length ? normalized : undefined;
+}
+
+function normalizeProviderEndpoint(value: unknown): ProviderEndpoint | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const candidate = value as {
+    baseUrl?: unknown;
+    apiKeyEnvVar?: unknown;
+    model?: unknown;
+  };
+  const baseUrl =
+    typeof candidate.baseUrl === "string" ? candidate.baseUrl.trim() : "";
+  const apiKeyEnvVar =
+    typeof candidate.apiKeyEnvVar === "string" ? candidate.apiKeyEnvVar.trim() : "";
+  const model = typeof candidate.model === "string" ? candidate.model.trim() : "";
+
+  if (!baseUrl || !apiKeyEnvVar) {
+    return undefined;
+  }
+
+  return {
+    baseUrl,
+    apiKeyEnvVar,
+    ...(model ? { model } : {})
+  };
 }

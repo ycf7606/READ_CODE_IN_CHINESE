@@ -164,6 +164,32 @@
           "default": "READ_CODE_IN_CHINESE_API_KEY",
           "description": "Environment variable name that stores the API key."
         },
+        "readCodeInChinese.provider.fallbacks": {
+          "type": "array",
+          "default": [],
+          "description": "Optional fallback OpenAI-compatible endpoints tried when the primary remote endpoint fails.",
+          "items": {
+            "type": "object",
+            "required": [
+              "baseUrl",
+              "apiKeyEnvVar"
+            ],
+            "properties": {
+              "baseUrl": {
+                "type": "string",
+                "description": "Fallback endpoint base URL."
+              },
+              "apiKeyEnvVar": {
+                "type": "string",
+                "description": "Environment variable name that stores the fallback endpoint API key."
+              },
+              "model": {
+                "type": "string",
+                "description": "Optional model override for this fallback endpoint."
+              }
+            }
+          }
+        },
         "readCodeInChinese.provider.timeoutMs": {
           "type": "number",
           "default": 20000,

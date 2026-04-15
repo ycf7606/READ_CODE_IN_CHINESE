@@ -1016,3 +1016,23 @@
 - Verification:
   - `cmd /c npm.cmd run compile`
   - `cmd /c npm.cmd test`
+
+### S30-01 Add multi-endpoint remote failover and restore local provider chain
+
+- Stage: 30
+- Result: Added support for multiple OpenAI-compatible endpoints with ordered failover in the provider, surfaced fallback endpoint editing in the settings panel, added a regression test for remote failover, and restored the local dev env so the original endpoint is primary and the new endpoint is available as fallback without committing secrets.
+- Files:
+  - `package.json`
+  - `src/contracts.ts`
+  - `src/config.ts`
+  - `src/extension.ts`
+  - `src/providers/createProvider.ts`
+  - `src/providers/openAICompatibleProvider.ts`
+  - `src/ui/settingsPanel.ts`
+  - `src/test/index.test.ts`
+  - `docs/project/WORKBOARD.md`
+  - `docs/project/COMPLETION_LOG.md`
+  - `docs/project/summaries/2026-04-15-stage-30.md`
+- Verification:
+  - `cmd /c npm.cmd run compile`
+  - `cmd /c npm.cmd test`

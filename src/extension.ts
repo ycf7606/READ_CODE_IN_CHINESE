@@ -134,6 +134,7 @@ export function activate(context: vscode.ExtensionContext): void {
         providerModel: message.payload.providerModel.trim(),
         providerApiKeyEnvVar:
           message.payload.providerApiKeyEnvVar.trim() || currentSettings.providerApiKeyEnvVar,
+        providerFallbacks: sanitizeProviderFallbacks(message.payload.providerFallbacks),
         providerTimeoutMs: sanitizeNumber(
           message.payload.providerTimeoutMs,
           currentSettings.providerTimeoutMs,
@@ -2024,6 +2025,13 @@ function summarizeSettings(settings: ReturnType<typeof getSettings>) {
     providerModel: settings.providerModel || "(empty)",
     providerApiKeyEnvVar: settings.providerApiKeyEnvVar,
     hasApiKey: Boolean(process.env[settings.providerApiKeyEnvVar]),
+    providerFallbackCount: settings.providerFallbacks.length,
+    providerFallbacks: settings.providerFallbacks.map((endpoint) => ({
+      baseUrl: endpoint.baseUrl,
+      apiKeyEnvVar: endpoint.apiKeyEnvVar,
+      hasApiKey: Boolean(process.env[endpoint.apiKeyEnvVar]),
+      model: endpoint.model || settings.providerModel || "(empty)"
+    })),
     providerReasoningEffort: settings.providerReasoningEffort,
     detailLevel: settings.detailLevel,
     professionalLevel: settings.professionalLevel,
@@ -2082,6 +2090,7 @@ async function saveSettingsFromPanel(payload: {
   providerBaseUrl: string;
   providerModel: string;
   providerApiKeyEnvVar: string;
+  providerFallbacks: ReturnType<typeof getSettings>["providerFallbacks"];
   providerTimeoutMs: number;
   customInstructions: string;
   userGoal: string;
@@ -2119,6 +2128,7 @@ async function saveSettingsFromPanel(payload: {
     ["provider.baseUrl", payload.providerBaseUrl.trim()],
     ["provider.model", payload.providerModel.trim()],
     ["provider.apiKeyEnvVar", payload.providerApiKeyEnvVar.trim()],
+    ["provider.fallbacks", sanitizeProviderFallbacks(payload.providerFallbacks)],
     ["provider.timeoutMs", sanitizedProviderTimeoutMs],
     ["prompt.customInstructions", payload.customInstructions.trim()],
     ["explanation.userGoal", payload.userGoal.trim()],
@@ -2154,6 +2164,38 @@ function sanitizeNumber(
   const maximum = options?.maximum ?? Infinity;
 
   return Math.min(maximum, Math.max(minimum, safeValue));
+}
+
+function sanitizeProviderFallbacks(
+  fallbacks: ReturnType<typeof getSettings>["providerFallbacks"]
+): ReturnType<typeof getSettings>["providerFallbacks"] {
+  const uniqueFallbacks = new Set<string>();
+  const normalizedFallbacks: ReturnType<typeof getSettings>["providerFallbacks"] = [];
+
+  for (const fallback of fallbacks) {
+    const baseUrl = fallback.baseUrl.trim();
+    const apiKeyEnvVar = fallback.apiKeyEnvVar.trim();
+    const model = fallback.model?.trim();
+
+    if (!baseUrl || !apiKeyEnvVar) {
+      continue;
+    }
+
+    const uniqueKey = `${baseUrl}|${apiKeyEnvVar}|${model ?? ""}`;
+
+    if (uniqueFallbacks.has(uniqueKey)) {
+      continue;
+    }
+
+    uniqueFallbacks.add(uniqueKey);
+    normalizedFallbacks.push({
+      baseUrl,
+      apiKeyEnvVar,
+      ...(model ? { model } : {})
+    });
+  }
+
+  return normalizedFallbacks;
 }
 
 function isAbortLikeError(error: unknown): boolean {

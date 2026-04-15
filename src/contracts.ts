@@ -50,6 +50,12 @@ export type PreprocessStatus =
   | "failed"
   | "canceled";
 
+export interface ProviderEndpoint {
+  baseUrl: string;
+  apiKeyEnvVar: string;
+  model?: string;
+}
+
 export interface ExtensionSettings {
   autoExplainEnabled: boolean;
   autoExplainDelayMs: number;
@@ -58,6 +64,7 @@ export interface ExtensionSettings {
   providerBaseUrl: string;
   providerModel: string;
   providerApiKeyEnvVar: string;
+  providerFallbacks: ProviderEndpoint[];
   providerTimeoutMs: number;
   providerTemperature: number;
   providerTopP: number;

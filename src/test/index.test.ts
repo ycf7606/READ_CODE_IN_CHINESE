@@ -373,6 +373,7 @@ test("symbol preprocess builder writes batch results into file cache", async () 
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 20000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -489,6 +490,7 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 20000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -609,6 +611,7 @@ test("symbol preprocess builder falls back per chunk when a remote batch fails",
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 20000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -738,6 +741,7 @@ test("symbol preprocess builder ignores placeholder cache entries", async () => 
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 20000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -975,6 +979,7 @@ test("openai provider normalizes preprocess candidate selections", async () => {
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 1000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -1013,6 +1018,115 @@ test("openai provider normalizes preprocess candidate selections", async () => {
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.TEST_OPENAI_PROVIDER_KEY;
+  }
+});
+
+test("openai provider fails over to fallback endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.TEST_OPENAI_PROVIDER_KEY = "primary-key";
+  process.env.TEST_OPENAI_PROVIDER_KEY_FALLBACK = "fallback-key";
+  const requestedUrls: string[] = [];
+
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    requestedUrls.push(url);
+
+    if (url.startsWith("https://primary.example.com/v1")) {
+      return new Response("upstream failure", {
+        status: 502,
+        headers: {
+          "Content-Type": "text/plain"
+        }
+      });
+    }
+
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                title: "Tensor Call",
+                summary: "来自备用接口。",
+                sections: [
+                  {
+                    label: "summary",
+                    content: "来自备用接口。"
+                  }
+                ],
+                suggestedQuestions: [],
+                glossaryHints: []
+              })
+            }
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    const provider = new OpenAICompatibleProvider({
+      autoExplainEnabled: false,
+      autoExplainDelayMs: 600,
+      autoOpenPanel: true,
+      providerId: "openai-compatible",
+      providerBaseUrl: "https://primary.example.com/v1",
+      providerModel: "gpt-5.4",
+      providerApiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY",
+      providerFallbacks: [
+        {
+          baseUrl: "https://fallback.example.com/v1",
+          apiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY_FALLBACK",
+          model: "gpt-5.4"
+        }
+      ],
+      providerTimeoutMs: 1000,
+      providerTemperature: 0.2,
+      providerTopP: 1,
+      providerMaxTokens: 1200,
+      providerReasoningEffort: "medium",
+      detailLevel: "balanced",
+      professionalLevel: "intermediate",
+      occupation: "developer",
+      sections: ["summary", "usage"],
+      userGoal: "",
+      knowledgeTopK: 3,
+      customInstructions: ""
+    });
+    const response = await provider.explain({
+      requestId: "remote-fallback",
+      reason: "manual",
+      languageId: "python",
+      filePath: "D:/workspace/model.py",
+      relativeFilePath: "model.py",
+      selectedText: "squeeze",
+      selectionPreview: "x = tensor.[[squeeze]](0)",
+      granularity: "token",
+      detailLevel: "balanced",
+      occupation: "developer",
+      professionalLevel: "intermediate",
+      sections: ["summary", "usage"],
+      userGoal: "",
+      customInstructions: "",
+      contextBefore: "tensor = output",
+      contextAfter: "",
+      glossaryEntries: [],
+      knowledgeSnippets: []
+    });
+
+    assert.equal(response.summary, "来自备用接口。");
+    assert.ok(requestedUrls.some((url) => url.startsWith("https://primary.example.com/v1")));
+    assert.ok(requestedUrls.some((url) => url.startsWith("https://fallback.example.com/v1")));
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.TEST_OPENAI_PROVIDER_KEY;
+    delete process.env.TEST_OPENAI_PROVIDER_KEY_FALLBACK;
   }
 });
 
@@ -1059,6 +1173,7 @@ test("openai provider normalizes section items from remote json", async () => {
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 1000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -1104,4 +1219,7 @@ test("openai provider normalizes section items from remote json", async () => {
     delete process.env.TEST_OPENAI_PROVIDER_KEY;
   }
 });
+
+
+
 

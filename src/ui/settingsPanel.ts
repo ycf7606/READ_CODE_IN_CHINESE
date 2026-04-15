@@ -3,6 +3,7 @@ import {
   ExtensionSettings,
   ExplanationSectionName,
   Occupation,
+  ProviderEndpoint,
   ProviderId,
   ReasoningEffort
 } from "../contracts";
@@ -17,6 +18,7 @@ type PromptGenerationPayload = {
   providerBaseUrl: string;
   providerModel: string;
   providerApiKeyEnvVar: string;
+  providerFallbacks: ProviderEndpoint[];
   providerTimeoutMs: number;
   occupation: Occupation;
   userGoal: string;
@@ -43,6 +45,7 @@ type SettingsMessage =
         providerBaseUrl: string;
         providerModel: string;
         providerApiKeyEnvVar: string;
+        providerFallbacks: ProviderEndpoint[];
         providerTimeoutMs: number;
         customInstructions: string;
         userGoal: string;
@@ -289,6 +292,11 @@ export class SettingsPanel implements vscode.Disposable {
             <span>API Key Env Var</span>
             <input id="providerApiKeyEnvVar" />
           </label>
+          <label style="grid-column: 1 / -1;">
+            <span>Fallback Endpoints</span>
+            <textarea id="providerFallbacks" style="min-height: 96px;"></textarea>
+            <span class="muted">One endpoint per line: <code>baseUrl | apiKeyEnvVar | optionalModel</code></span>
+          </label>
           <label>
             <span>Timeout (ms)</span>
             <input id="providerTimeoutMs" type="number" step="1000" min="1000" />
@@ -398,6 +406,7 @@ export class SettingsPanel implements vscode.Disposable {
       const providerBaseUrl = document.getElementById("providerBaseUrl");
       const providerModel = document.getElementById("providerModel");
       const providerApiKeyEnvVar = document.getElementById("providerApiKeyEnvVar");
+      const providerFallbacks = document.getElementById("providerFallbacks");
       const providerTimeoutMs = document.getElementById("providerTimeoutMs");
       const userGoal = document.getElementById("userGoal");
       const detailLevel = document.getElementById("detailLevel");
@@ -426,6 +435,48 @@ export class SettingsPanel implements vscode.Disposable {
           .map((checkbox) => checkbox.value);
       }
 
+      function serializeFallbacks(entries) {
+        return (entries || [])
+          .map((entry) => {
+            const baseUrl = (entry.baseUrl || "").trim();
+            const apiKeyEnvVar = (entry.apiKeyEnvVar || "").trim();
+            const model = (entry.model || "").trim();
+
+            if (!baseUrl || !apiKeyEnvVar) {
+              return "";
+            }
+
+            return model
+              ? [baseUrl, apiKeyEnvVar, model].join(" | ")
+              : [baseUrl, apiKeyEnvVar].join(" | ");
+          })
+          .filter(Boolean)
+          .join("\\n");
+      }
+
+      function parseFallbacks(value) {
+        return String(value || "")
+          .split(/\\r?\\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const [baseUrl = "", apiKeyEnvVar = "", model = ""] = line
+              .split("|")
+              .map((part) => part.trim());
+
+            if (!baseUrl || !apiKeyEnvVar) {
+              return undefined;
+            }
+
+            return {
+              baseUrl,
+              apiKeyEnvVar,
+              ...(model ? { model } : {})
+            };
+          })
+          .filter(Boolean);
+      }
+
       window.addEventListener("message", (event) => {
         const { type, payload } = event.data;
 
@@ -439,6 +490,7 @@ export class SettingsPanel implements vscode.Disposable {
         providerBaseUrl.value = settings.providerBaseUrl || "";
         providerModel.value = settings.providerModel || "";
         providerApiKeyEnvVar.value = settings.providerApiKeyEnvVar || "";
+        providerFallbacks.value = serializeFallbacks(settings.providerFallbacks || []);
         providerTimeoutMs.value = String(settings.providerTimeoutMs);
         customInstructions.value = settings.customInstructions || "";
         userGoal.value = settings.userGoal || "";
@@ -461,6 +513,7 @@ export class SettingsPanel implements vscode.Disposable {
             providerBaseUrl: providerBaseUrl.value,
             providerModel: providerModel.value,
             providerApiKeyEnvVar: providerApiKeyEnvVar.value,
+            providerFallbacks: parseFallbacks(providerFallbacks.value),
             providerTimeoutMs: Number(providerTimeoutMs.value),
             occupation: occupation.value,
             userGoal: userGoal.value,
@@ -487,6 +540,7 @@ export class SettingsPanel implements vscode.Disposable {
             providerBaseUrl: providerBaseUrl.value,
             providerModel: providerModel.value,
             providerApiKeyEnvVar: providerApiKeyEnvVar.value,
+            providerFallbacks: parseFallbacks(providerFallbacks.value),
             providerTimeoutMs: Number(providerTimeoutMs.value),
             customInstructions: customInstructions.value,
             userGoal: userGoal.value,

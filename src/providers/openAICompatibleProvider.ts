@@ -53,6 +53,13 @@ interface ChatCompletionResponse {
   choices?: ChatCompletionChoice[];
 }
 
+interface RemoteEndpointConfig {
+  baseUrl: string;
+  apiKeyEnvVar: string;
+  apiKey: string;
+  model: string;
+}
+
 export class OpenAICompatibleProvider implements ExplanationProvider {
   readonly id = "openai-compatible";
 
@@ -239,22 +246,110 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
       | "prompt-profile",
     signal?: AbortSignal
   ): Promise<string> {
-    const apiKey = process.env[this.settings.providerApiKeyEnvVar];
+    const endpoints = getConfiguredRemoteEndpoints(this.settings);
 
-    if (!apiKey) {
-      throw new Error(
-        `Environment variable ${this.settings.providerApiKeyEnvVar} is not set.`
-      );
+    if (endpoints.length === 0) {
+      throw new Error("No valid remote endpoints are configured for the OpenAI-compatible provider.");
     }
 
-    const baseUrl = this.settings.providerBaseUrl.replace(/\/+$/, "");
+    try {
+      let payloadCandidatesByEndpoint = new Map<string, Array<Record<string, unknown>>>();
+      let logicalAttempt = 0;
+      const attemptErrors: string[] = [];
 
-    if (!baseUrl || !this.settings.providerModel) {
-      throw new Error("Provider base URL and model are required for remote requests.");
+      for (let round = 0; round < 2; round += 1) {
+        for (const endpoint of endpoints) {
+          const endpointKey = `${endpoint.baseUrl}|${endpoint.model}`;
+          const payloadCandidates =
+            payloadCandidatesByEndpoint.get(endpointKey) ??
+            buildPayloadCandidates(this.settings, messages, mode, endpoint.model);
+
+          payloadCandidatesByEndpoint.set(endpointKey, payloadCandidates);
+
+          for (const payloadBody of payloadCandidates) {
+            if (signal?.aborted) {
+              throw new Error("Request aborted");
+            }
+
+            logicalAttempt += 1;
+            this.logger?.info("Sending remote provider request", {
+              mode,
+              attempt: logicalAttempt,
+              round: round + 1,
+              endpointBaseUrl: endpoint.baseUrl,
+              endpointModel: endpoint.model,
+              endpointApiKeyEnvVar: endpoint.apiKeyEnvVar,
+              endpointIndex: endpoints.indexOf(endpoint) + 1,
+              endpointCount: endpoints.length,
+              messageCount: messages.length,
+              temperature: payloadBody.temperature,
+              topP: payloadBody.top_p,
+              maxTokens: payloadBody.max_tokens,
+              reasoningEffort: payloadBody.reasoning_effort ?? "(omitted)",
+              hasResponseFormat: Boolean(payloadBody.response_format)
+            });
+
+            try {
+              const payload = await this.sendChatCompletionRequest(
+                endpoint,
+                payloadBody,
+                signal
+              );
+              const content = extractMessageContent(payload.choices?.[0]);
+
+              if (content) {
+                return content;
+              }
+
+              this.logger?.warn("Remote provider returned a choice without message content", {
+                mode,
+                attempt: logicalAttempt,
+                endpointBaseUrl: endpoint.baseUrl,
+                endpointModel: endpoint.model,
+                payloadPreview: JSON.stringify(payload).slice(0, 500)
+              });
+            } catch (error) {
+              if (isAbortLikeError(error)) {
+                throw error;
+              }
+
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              attemptErrors.push(
+                `[${endpoint.baseUrl}] ${errorMessage}`
+              );
+              this.logger?.warn("Remote provider attempt failed, trying next endpoint if available", {
+                mode,
+                attempt: logicalAttempt,
+                endpointBaseUrl: endpoint.baseUrl,
+                endpointModel: endpoint.model,
+                error: errorMessage
+              });
+            }
+          }
+        }
+      }
+
+      if (attemptErrors.length > 0) {
+        throw new Error(
+          `All configured remote endpoints failed. ${attemptErrors.slice(0, 4).join(" | ")}`
+        );
+      }
+
+      throw new Error("Remote provider did not return a message content.");
+    } catch (error) {
+      this.logger?.error("Remote provider request failed", error);
+      throw error;
     }
+  }
 
+  private async sendChatCompletionRequest(
+    endpoint: RemoteEndpointConfig,
+    payloadBody: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<ChatCompletionResponse> {
     const controller = new AbortController();
     const abortHandler = () => controller.abort();
+
     signal?.addEventListener("abort", abortHandler);
     const timeoutHandle = setTimeout(
       () => controller.abort(),
@@ -262,70 +357,98 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
     );
 
     try {
-      const payloadCandidates = buildPayloadCandidates(this.settings, messages, mode);
-      let logicalAttempt = 0;
-
-      for (let round = 0; round < 2; round += 1) {
-        for (const payloadBody of payloadCandidates) {
-          if (controller.signal.aborted) {
-            throw new Error("Request aborted");
-          }
-
-          logicalAttempt += 1;
-          this.logger?.info("Sending remote provider request", {
-            mode,
-            attempt: logicalAttempt,
-            baseUrl,
-            model: this.settings.providerModel,
-            messageCount: messages.length,
-            temperature: payloadBody.temperature,
-            topP: payloadBody.top_p,
-            maxTokens: payloadBody.max_tokens,
-            reasoningEffort: payloadBody.reasoning_effort ?? "(omitted)",
-            hasResponseFormat: Boolean(payloadBody.response_format)
-          });
-
-          const response = await fetch(`${baseUrl}/chat/completions`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`
-            },
-            body: JSON.stringify(payloadBody),
-            signal: controller.signal
-          });
-
-          if (!response.ok) {
-            const errorText = await safeReadText(response);
-            throw new Error(
-              `Remote provider returned ${response.status} ${response.statusText}. ${shortenWhitespace(errorText)}`
-            );
-          }
-
-          const payload = (await response.json()) as ChatCompletionResponse;
-          const content = extractMessageContent(payload.choices?.[0]);
-
-          if (content) {
-            return content;
-          }
-
-          this.logger?.warn("Remote provider returned a choice without message content", {
-            mode,
-            attempt: logicalAttempt,
-            payloadPreview: JSON.stringify(payload).slice(0, 500)
-          });
-        }
+      if (signal?.aborted) {
+        throw new Error("Request aborted");
       }
 
-      throw new Error("Remote provider did not return a message content.");
-    } catch (error) {
-      this.logger?.error("Remote provider request failed", error);
-      throw error;
+      const response = await fetch(`${endpoint.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${endpoint.apiKey}`
+        },
+        body: JSON.stringify(payloadBody),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        const errorText = await safeReadText(response);
+        throw new Error(
+          `Remote provider returned ${response.status} ${response.statusText}. ${shortenWhitespace(errorText)}`
+        );
+      }
+
+      return (await response.json()) as ChatCompletionResponse;
     } finally {
       clearTimeout(timeoutHandle);
       signal?.removeEventListener("abort", abortHandler);
     }
   }
+}
+
+function getConfiguredRemoteEndpoints(settings: ExtensionSettings): RemoteEndpointConfig[] {
+  const rawEndpoints = [
+    {
+      baseUrl: settings.providerBaseUrl,
+      apiKeyEnvVar: settings.providerApiKeyEnvVar,
+      model: settings.providerModel
+    },
+    ...settings.providerFallbacks.map((endpoint) => ({
+      baseUrl: endpoint.baseUrl,
+      apiKeyEnvVar: endpoint.apiKeyEnvVar,
+      model: endpoint.model ?? settings.providerModel
+    }))
+  ];
+  const uniqueEndpoints = new Set<string>();
+  const normalizedEndpoints: RemoteEndpointConfig[] = [];
+
+  for (const endpoint of rawEndpoints) {
+    const baseUrl = endpoint.baseUrl.trim().replace(/\/+$/, "");
+    const apiKeyEnvVar = endpoint.apiKeyEnvVar.trim();
+    const model = endpoint.model.trim();
+
+    if (!baseUrl || !apiKeyEnvVar || !model) {
+      continue;
+    }
+
+    const uniqueKey = `${baseUrl}|${apiKeyEnvVar}|${model}`;
+
+    if (uniqueEndpoints.has(uniqueKey)) {
+      continue;
+    }
+
+    const apiKey = process.env[apiKeyEnvVar]?.trim();
+
+    if (!apiKey) {
+      continue;
+    }
+
+    uniqueEndpoints.add(uniqueKey);
+    normalizedEndpoints.push({
+      baseUrl,
+      apiKeyEnvVar,
+      apiKey,
+      model
+    });
+  }
+
+  return normalizedEndpoints;
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  if (!error) {
+    return false;
+  }
+
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
+  }
+
+  if (error instanceof Error) {
+    return error.name === "AbortError" || /aborted/i.test(error.message);
+  }
+
+  return false;
 }
 
 function buildPayloadCandidates(
@@ -336,10 +459,11 @@ function buildPayloadCandidates(
     | "follow-up"
     | "preprocess"
     | "preprocess-select"
-    | "prompt-profile"
+    | "prompt-profile",
+  model: string
 ): Array<Record<string, unknown>> {
   const basePayload = {
-    model: settings.providerModel,
+    model,
     temperature: settings.providerTemperature,
     top_p: settings.providerTopP,
     max_tokens: settings.providerMaxTokens,

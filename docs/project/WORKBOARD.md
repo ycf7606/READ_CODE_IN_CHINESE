@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 29
-- Latest summary: `docs/project/summaries/2026-04-15-stage-29.md`
+- Latest completed milestone: Stage 30
+- Latest summary: `docs/project/summaries/2026-04-15-stage-30.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -50,6 +50,7 @@ Every future work session must read these files in order before making changes:
 | 27 | Rollback to stable Stage 22 baseline | Completed | Reverted unstable post-Stage-22 panel state changes, verified the Stage 22 baseline, and documented a new reimplementation route |
 | 28 | Rollback to stable Stage 19 baseline | Completed | Pulled the Stage 19 code snapshot directly, removed Current Selection-era changes, and documented a safer rebuild route for Stage 20-22 capabilities |
 | 29 | Stage 19 preprocess reliability hardening | Completed | Added per-batch local fallback so remote preprocess failures no longer stop the whole wordbook job |
+| 30 | Multi-endpoint remote failover | Completed | Added primary-plus-fallback OpenAI-compatible endpoints, settings-panel editing, and provider-level remote failover |
 
 ## Completed Tasks
 
@@ -177,6 +178,11 @@ Every future work session must read these files in order before making changes:
 - [x] S29-02 Add per-chunk local fallback so preprocessing continues after a non-abort remote batch failure.
 - [x] S29-03 Add regression coverage for mixed remote/local chunk completion and verify compile plus tests.
 - [x] S29-04 Produce the Stage 29 summary file.
+- [x] S30-01 Add configuration support for multiple OpenAI-compatible endpoints with per-endpoint base URL, API key env var, and optional model override.
+- [x] S30-02 Update the provider to fail over across remote endpoints before giving up to the local fallback path.
+- [x] S30-03 Expose fallback endpoints in the settings panel and add regression coverage for remote endpoint failover.
+- [x] S30-04 Restore the user's local dev env so the original endpoint stays primary and the new endpoint is available as fallback without committing secrets.
+- [x] S30-05 Produce the Stage 30 summary file.
 
 ## Current Todo
 
@@ -219,6 +225,7 @@ Every future work session must read these files in order before making changes:
 - Stage 28 moves the baseline back further to Stage 19 because Stage 20 introduced the Current Selection card and related explanation-surface changes, and the user confirmed all versions containing that UI line are unusable in practice.
 - The replacement route after Stage 28 is to rebuild only the needed Stage 20-22 capabilities on top of Stage 19, with a dedicated controller for panel/watch/preprocess orchestration and without reviving the Current Selection-era explanation surface.
 - A Stage 29 reliability fix keeps Stage 19 preprocessing moving even when one remote wordbook batch times out, returns empty content, or otherwise fails mid-run.
+- A Stage 30 reliability upgrade adds ordered remote endpoint failover, so transient primary endpoint failures no longer force an immediate drop to local-only behavior.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

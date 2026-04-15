@@ -8,10 +8,14 @@ export function createProvider(
   settings: ExtensionSettings,
   logger?: ExtensionLogger
 ): ExplanationProvider {
+  const hasPrimaryRemoteConfig =
+    Boolean(settings.providerBaseUrl) && Boolean(settings.providerModel);
+  const fallbackCount = settings.providerFallbacks.filter(
+    (endpoint) => Boolean(endpoint.baseUrl) && Boolean(endpoint.apiKeyEnvVar)
+  ).length;
   const hasRemoteConfig =
     settings.providerId === "openai-compatible" &&
-    Boolean(settings.providerBaseUrl) &&
-    Boolean(settings.providerModel);
+    (hasPrimaryRemoteConfig || fallbackCount > 0);
 
   if (hasRemoteConfig) {
     logger?.info("Provider selected", {
@@ -19,7 +23,8 @@ export function createProvider(
       model: settings.providerModel,
       baseUrl: settings.providerBaseUrl,
       apiKeyEnvVar: settings.providerApiKeyEnvVar,
-      hasApiKey: Boolean(process.env[settings.providerApiKeyEnvVar])
+      hasApiKey: Boolean(process.env[settings.providerApiKeyEnvVar]),
+      fallbackCount
     });
     return new OpenAICompatibleProvider(settings, logger);
   }
@@ -30,7 +35,8 @@ export function createProvider(
     hasBaseUrl: Boolean(settings.providerBaseUrl),
     hasModel: Boolean(settings.providerModel),
     apiKeyEnvVar: settings.providerApiKeyEnvVar,
-    hasApiKey: Boolean(process.env[settings.providerApiKeyEnvVar])
+    hasApiKey: Boolean(process.env[settings.providerApiKeyEnvVar]),
+    fallbackCount
   });
 
   return new LocalExplanationProvider(logger);
