@@ -84,7 +84,7 @@ export class ExplanationPanel implements vscode.Disposable {
   }
 
   isWatchingSelection(): boolean {
-    return Boolean(this.panel);
+    return this.isVisible();
   }
 
   isVisible(): boolean {

@@ -987,3 +987,17 @@
 - Verification:
   - `cmd /c npm.cmd run compile`
   - `cmd /c npm.cmd test`
+
+### S25-01 Resynchronize panel selection watch and wordbook state
+
+- Stage: 25
+- Result: Changed watched-selection semantics to depend on panel visibility, replayed the current selection when the explanation panel becomes ready, and synchronized wordbook/progress/file-context updates more aggressively during preprocess runs.
+- Files:
+  - `src/extension.ts`
+  - `src/ui/explanationPanel.ts`
+  - `docs/project/WORKBOARD.md`
+  - `docs/project/COMPLETION_LOG.md`
+  - `docs/project/summaries/2026-04-15-stage-25.md`
+- Verification:
+  - `cmd /c npm.cmd run compile`
+  - `cmd /c npm.cmd test`
