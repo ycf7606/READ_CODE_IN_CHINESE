@@ -1001,3 +1001,17 @@
 - Verification:
   - `cmd /c npm.cmd run compile`
   - `cmd /c npm.cmd test`
+
+### S26-01 Split watch/reveal semantics and add wordbook diagnostics
+
+- Stage: 26
+- Result: Split panel-open and panel-visible semantics so monitored selection watching no longer depends on the same boolean as auto-reveal, and added logs that show whether wordbook cache entries are loaded, outdated, or updated during preprocess.
+- Files:
+  - `src/extension.ts`
+  - `src/ui/explanationPanel.ts`
+  - `docs/project/WORKBOARD.md`
+  - `docs/project/COMPLETION_LOG.md`
+  - `docs/project/summaries/2026-04-15-stage-26.md`
+- Verification:
+  - `cmd /c npm.cmd run compile`
+  - `cmd /c npm.cmd test`

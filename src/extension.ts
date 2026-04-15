@@ -447,7 +447,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       const shouldWatchSelection =
-        getSettings().autoExplainEnabled || panel.isWatchingSelection();
+        getSettings().autoExplainEnabled || panel.isOpen();
 
       if (!shouldWatchSelection) {
         return;
@@ -679,7 +679,7 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       const sourceHash = createContentHash(editor.document.getText());
       const shouldRevealPanel =
-        options.revealPanel || (!panel.isWatchingSelection() && getSettings().autoOpenPanel);
+        options.revealPanel || (!panel.isVisible() && getSettings().autoOpenPanel);
 
       if (shouldRevealPanel) {
         panel.show();
@@ -1548,7 +1548,8 @@ export function activate(context: vscode.ExtensionContext): void {
     const preprocessStore = new PreprocessStore(projectContext.workspaceStore);
     const sourceHash = createContentHash(editor.document.getText());
     await ensureScopeRegions(editor.document, projectContext.relativeFilePath, sourceHash);
-    const cacheFile = await preprocessStore.read(projectContext.relativeFilePath);
+    const rawCacheFile = await preprocessStore.read(projectContext.relativeFilePath);
+    const cacheFile = rawCacheFile;
 
     if (preprocessStore.isCurrent(cacheFile, sourceHash)) {
       const sanitizedEntries = sanitizeWordbookEntries(cacheFile.entries);
@@ -1562,8 +1563,21 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       setWordbookState(projectContext.relativeFilePath, cacheFile.sourceHash, sanitizedEntries);
+      logger.info("Wordbook cache loaded for editor", {
+        relativeFilePath: projectContext.relativeFilePath,
+        cachedEntryCount: cacheFile.entries.length,
+        visibleEntryCount: sanitizedEntries.length,
+        sourceHashMatched: cacheFile.sourceHash === sourceHash
+      });
     } else {
       setWordbookState(projectContext.relativeFilePath, sourceHash, []);
+      logger.info("Wordbook cache missing or outdated for editor", {
+        relativeFilePath: projectContext.relativeFilePath,
+        hasCache: Boolean(rawCacheFile),
+        cacheSourceHash: rawCacheFile?.sourceHash,
+        editorSourceHash: sourceHash,
+        cacheBuilderVersion: rawCacheFile?.builderVersion
+      });
     }
 
     panel.setState({
@@ -1702,6 +1716,10 @@ export function activate(context: vscode.ExtensionContext): void {
             cacheFile.sourceHash,
             cacheFile.entries
           );
+          logger.info("Wordbook cache updated during preprocess", {
+            relativeFilePath: projectContext.relativeFilePath,
+            cachedEntryCount: cacheFile.entries.length
+          });
           panel.setState({
             wordbookEntries: getVisibleWordbookEntries(editor),
             preprocessProgress: getVisiblePreprocessProgress(
@@ -1741,6 +1759,11 @@ export function activate(context: vscode.ExtensionContext): void {
           result.cacheFile.sourceHash,
           result.cacheFile.entries
         );
+        logger.info("Wordbook preprocess result applied", {
+          relativeFilePath: projectContext.relativeFilePath,
+          entryCount: result.cacheFile.entries.length,
+          sourceHash: result.cacheFile.sourceHash
+        });
         panel.setState({
           wordbookEntries: getVisibleWordbookEntries(editor),
           preprocessProgress: getVisiblePreprocessProgress(

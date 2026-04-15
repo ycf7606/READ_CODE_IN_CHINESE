@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 25
-- Latest summary: `docs/project/summaries/2026-04-15-stage-25.md`
+- Latest completed milestone: Stage 26
+- Latest summary: `docs/project/summaries/2026-04-15-stage-26.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -50,6 +50,7 @@ Every future work session must read these files in order before making changes:
 | 23 | Source editor isolation and auto-explain stabilization | Completed | Ignored output/log editors, preserved tracked source context, and deduplicated repeated auto-explain requests |
 | 24 | Panel navigation and preprocess visibility | Completed | Settings entry made foreground-safe, command-URI fallback added, and preprocessing status made clearer in the explain page |
 | 25 | Panel state resynchronization | Completed | Visible-state watching, ready-time selection replay, and stronger wordbook/progress file-context syncing |
+| 26 | Watch/reveal split and wordbook diagnostics | Completed | Split panel-open vs panel-visible logic, restored stable selection watching, and added wordbook cache diagnostics |
 
 ## Completed Tasks
 
@@ -176,6 +177,9 @@ Every future work session must read these files in order before making changes:
 - [x] S25-02 Re-run explanation for the current source selection when the explanation panel becomes ready again.
 - [x] S25-03 Tighten wordbook and preprocess UI syncing so file context, progress, and entries update together during preprocess runs.
 - [x] S25-04 Compile, run tests, and publish the Stage 25 summary plus tracking updates.
+- [x] S26-01 Split panel-open and panel-visible semantics so selection watching and auto-reveal stop depending on the same boolean.
+- [x] S26-02 Add wordbook cache diagnostics to show whether entries are loaded, outdated, or updated during preprocess.
+- [x] S26-03 Compile, run tests, and publish the Stage 26 summary plus tracking updates.
 
 ## Current Todo
 
@@ -209,6 +213,7 @@ Every future work session must read these files in order before making changes:
 - A Stage 23 update isolated tracked source-editor state from output/log editors and tightened auto-explain deduplication so repeated same-selection requests stop canceling each other while logs or panels are open.
 - A Stage 24 update made panel-to-settings navigation explicit and foreground-safe, and made preprocessing progress easier to see from the explain page during manual preprocessing runs.
 - A Stage 25 update fixed a deeper panel-state sync issue by making selection watching visibility-based, replaying the current selection when the panel becomes ready, and syncing wordbook/progress updates with the active file context more aggressively.
+- A Stage 26 update separated panel-open and panel-visible semantics again to restore stable watched-selection behavior while keeping auto-reveal sane, and added wordbook cache diagnostics for faster runtime debugging.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.
