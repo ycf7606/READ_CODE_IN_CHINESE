@@ -13,8 +13,8 @@ Every future work session must read these files in order before making changes:
 
 - Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 26
-- Latest summary: `docs/project/summaries/2026-04-15-stage-26.md`
+- Latest completed milestone: Stage 27
+- Latest summary: `docs/project/summaries/2026-04-15-stage-27.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -47,10 +47,7 @@ Every future work session must read these files in order before making changes:
 | 20 | Selection-focused explanation polish | Completed | Qualified-call API symbol extraction, top-of-page selection focus, markdown rendering, and glossary snapshot removal |
 | 21 | LSP-aware wordbook structure | Completed | Hybrid LSP glossary extraction, local/API wordbook layers, search/scope filters, and per-file expand-state persistence |
 | 22 | Panel recovery and scalable extraction | Completed | Webview script hardening, preprocess cache versioning, TS AST external extraction, Python alias/decorator coverage, and near-selection wordbook filtering |
-| 23 | Source editor isolation and auto-explain stabilization | Completed | Ignored output/log editors, preserved tracked source context, and deduplicated repeated auto-explain requests |
-| 24 | Panel navigation and preprocess visibility | Completed | Settings entry made foreground-safe, command-URI fallback added, and preprocessing status made clearer in the explain page |
-| 25 | Panel state resynchronization | Completed | Visible-state watching, ready-time selection replay, and stronger wordbook/progress file-context syncing |
-| 26 | Watch/reveal split and wordbook diagnostics | Completed | Split panel-open vs panel-visible logic, restored stable selection watching, and added wordbook cache diagnostics |
+| 27 | Rollback to stable Stage 22 baseline | Completed | Reverted unstable post-Stage-22 panel state changes, verified the Stage 22 baseline, and documented a new reimplementation route |
 
 ## Completed Tasks
 
@@ -166,24 +163,17 @@ Every future work session must read these files in order before making changes:
 - [x] S22-03 Add TypeScript AST-backed external symbol extraction for aliased imports, decorators, chained calls, and imported constructors.
 - [x] S22-04 Expand Python external symbol coverage for aliased imports, decorators, and direct imported-alias calls.
 - [x] S22-05 Add large-wordbook mitigation with lazy tree rendering and a `Near selection` scope filter, then produce the Stage 22 summary file.
-- [x] S23-01 Stop non-source editors such as output/log buffers from replacing the tracked source editor or canceling live explanation/preprocess tasks.
-- [x] S23-02 Deduplicate auto-explain requests for the same selection so repeated selection events no longer churn versions and abort each other.
-- [x] S23-03 Route file-scoped commands and refresh paths through the preferred tracked source editor when focus moves away from code.
-- [x] S23-04 Compile, run tests, and publish the Stage 23 summary plus tracking updates.
-- [x] S24-01 Make the explanation-panel `Settings` entry foreground-safe by removing preserve-focus behavior for settings reveals and adding a command-URI path from the webview.
-- [x] S24-02 Bring the explanation panel forward for user-triggered preprocessing and add clearer preprocessing status text on the explain page.
-- [x] S24-03 Compile, run tests, and publish the Stage 24 summary plus tracking updates.
-- [x] S25-01 Change watched-selection semantics to depend on panel visibility instead of mere panel existence.
-- [x] S25-02 Re-run explanation for the current source selection when the explanation panel becomes ready again.
-- [x] S25-03 Tighten wordbook and preprocess UI syncing so file context, progress, and entries update together during preprocess runs.
-- [x] S25-04 Compile, run tests, and publish the Stage 25 summary plus tracking updates.
-- [x] S26-01 Split panel-open and panel-visible semantics so selection watching and auto-reveal stop depending on the same boolean.
-- [x] S26-02 Add wordbook cache diagnostics to show whether entries are loaded, outdated, or updated during preprocess.
-- [x] S26-03 Compile, run tests, and publish the Stage 26 summary plus tracking updates.
+- [x] S27-01 Identify the last known usable version from git history and confirm `Stage 22` (`5dedc4f`) as the rollback baseline.
+- [x] S27-02 Revert `Stage 23-26` so the repository returns to the Stage 22 code baseline.
+- [x] S27-03 Verify the rollback baseline with compile and test.
+- [x] S27-04 Document the post-Stage-22 feature delta and a replacement implementation route for reintroducing those capabilities more safely.
 
 ## Current Todo
 
-- [ ] No open implementation tasks in the current delivery scope.
+- [ ] Reintroduce post-Stage-22 source-editor tracking with a dedicated session controller instead of embedding more state branches into `src/extension.ts`.
+- [ ] Rebuild watched-selection behavior around explicit `tracked source editor`, `panel visible`, and `panel open` state transitions with a single owner module.
+- [ ] Rework wordbook/preprocess UI updates into a pull-based snapshot model keyed by `relativeFilePath + sourceHash` so progress and entries cannot drift apart.
+- [ ] Re-add the post-Stage-22 UX features only after the new controller path is stable on real VS Code interaction tests.
 
 ## Open Decisions Locked for Now
 
@@ -210,10 +200,13 @@ Every future work session must read these files in order before making changes:
 - A Stage 20 update widened preprocessing to qualified API call symbols, highlighted the current selection at the top of the explanation page, added basic markdown rendering, and removed the now-unused glossary snapshot block.
 - A Stage 21 update moved glossary generation to a hybrid regex + LSP structure pipeline, carried symbol origin/scope metadata through the wordbook cache, and upgraded the wordbook tab into a layered searchable tree with per-file persisted expand state.
 - A Stage 22 update hardened the panel webview against script regressions, versioned preprocess caches, added TS AST-backed external extraction plus deeper Python alias/decorator coverage, and reduced large-wordbook rendering cost with lazy tree hydration and near-selection filtering.
-- A Stage 23 update isolated tracked source-editor state from output/log editors and tightened auto-explain deduplication so repeated same-selection requests stop canceling each other while logs or panels are open.
-- A Stage 24 update made panel-to-settings navigation explicit and foreground-safe, and made preprocessing progress easier to see from the explain page during manual preprocessing runs.
-- A Stage 25 update fixed a deeper panel-state sync issue by making selection watching visibility-based, replaying the current selection when the panel becomes ready, and syncing wordbook/progress updates with the active file context more aggressively.
-- A Stage 26 update separated panel-open and panel-visible semantics again to restore stable watched-selection behavior while keeping auto-reveal sane, and added wordbook cache diagnostics for faster runtime debugging.
+- After Stage 22, the repository temporarily added these feature groups before they were rolled back:
+  - Stage 23: source editor isolation and auto-explain stabilization
+  - Stage 24: settings navigation and preprocess visibility polish
+  - Stage 25: panel ready-time resync and tighter wordbook/progress syncing
+  - Stage 26: watch/reveal state split and extra wordbook diagnostics
+- Stage 27 intentionally rolls the codebase back to the Stage 22 baseline because the post-Stage-22 fixes concentrated too much runtime state management inside `src/extension.ts`, which made the panel, selection watch, and wordbook flows fragile under real VS Code focus changes.
+- The replacement route after Stage 27 is to move panel/watch/preprocess orchestration into a dedicated controller with explicit state transitions, then reintroduce the rolled-back feature groups on top of that simpler baseline.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

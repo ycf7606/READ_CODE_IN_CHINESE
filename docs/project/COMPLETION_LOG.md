@@ -960,58 +960,17 @@
 - Verification:
   - `cmd /c npm.cmd test`
 
-### S23-01 Isolate source-editor state and stabilize auto explain
+### S27-01 Roll back to the stable Stage 22 baseline
 
-- Stage: 23
-- Result: Stopped output/log editors from replacing the tracked source editor, prevented same-selection auto-explain churn with scheduled/active/settled signatures, and routed source-dependent commands through the last valid source editor.
+- Stage: 27
+- Result: Identified `5dedc4f` (`Stage 22`) as the last known usable version, reverted the `Stage 23-26` change range, verified the restored baseline with compile and tests, and documented both the post-Stage-22 feature delta and a safer replacement implementation route.
 - Files:
   - `src/extension.ts`
-  - `docs/project/WORKBOARD.md`
-  - `docs/project/COMPLETION_LOG.md`
-  - `docs/project/summaries/2026-04-15-stage-23.md`
-- Verification:
-  - `cmd /c npm.cmd run compile`
-  - `cmd /c npm.cmd test`
-
-### S24-01 Fix panel settings navigation and preprocess visibility
-
-- Stage: 24
-- Result: Made the explanation-panel `Settings` control foreground-safe with a command-URI path plus non-preserve-focus settings reveals, and brought the explanation panel forward for user-triggered preprocessing while adding clearer preprocess status text to the explain page.
-- Files:
   - `src/ui/explanationPanel.ts`
   - `src/ui/settingsPanel.ts`
-  - `src/extension.ts`
   - `docs/project/WORKBOARD.md`
   - `docs/project/COMPLETION_LOG.md`
-  - `docs/project/summaries/2026-04-15-stage-24.md`
-- Verification:
-  - `cmd /c npm.cmd run compile`
-  - `cmd /c npm.cmd test`
-
-### S25-01 Resynchronize panel selection watch and wordbook state
-
-- Stage: 25
-- Result: Changed watched-selection semantics to depend on panel visibility, replayed the current selection when the explanation panel becomes ready, and synchronized wordbook/progress/file-context updates more aggressively during preprocess runs.
-- Files:
-  - `src/extension.ts`
-  - `src/ui/explanationPanel.ts`
-  - `docs/project/WORKBOARD.md`
-  - `docs/project/COMPLETION_LOG.md`
-  - `docs/project/summaries/2026-04-15-stage-25.md`
-- Verification:
-  - `cmd /c npm.cmd run compile`
-  - `cmd /c npm.cmd test`
-
-### S26-01 Split watch/reveal semantics and add wordbook diagnostics
-
-- Stage: 26
-- Result: Split panel-open and panel-visible semantics so monitored selection watching no longer depends on the same boolean as auto-reveal, and added logs that show whether wordbook cache entries are loaded, outdated, or updated during preprocess.
-- Files:
-  - `src/extension.ts`
-  - `src/ui/explanationPanel.ts`
-  - `docs/project/WORKBOARD.md`
-  - `docs/project/COMPLETION_LOG.md`
-  - `docs/project/summaries/2026-04-15-stage-26.md`
+  - `docs/project/summaries/2026-04-15-stage-27.md`
 - Verification:
   - `cmd /c npm.cmd run compile`
   - `cmd /c npm.cmd test`
