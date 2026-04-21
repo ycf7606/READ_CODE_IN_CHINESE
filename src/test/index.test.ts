@@ -1,6 +1,8 @@
 ﻿import test from "node:test";
 import assert from "node:assert/strict";
 import { promises as fs } from "fs";
+import { createServer } from "http";
+import type { AddressInfo } from "net";
 import * as os from "os";
 import * as path from "path";
 import {
@@ -33,10 +35,40 @@ import { OpenAICompatibleProvider } from "../providers/openAICompatibleProvider"
 import { WorkspaceStore } from "../storage/workspaceStore";
 import { createContentHash } from "../utils/hash";
 import {
+  ExtensionSettings,
   ExplanationRequest,
   PreprocessProgress,
   SymbolPreprocessRequest
 } from "../contracts";
+
+function createRemoteSettings(
+  overrides: Partial<ExtensionSettings> = {}
+): ExtensionSettings {
+  return {
+    autoExplainEnabled: false,
+    autoExplainDelayMs: 600,
+    autoOpenPanel: true,
+    providerId: "openai-compatible",
+    providerBaseUrl: "https://example.com/v1",
+    providerModel: "gpt-5.4",
+    providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+    providerFallbacks: [],
+    providerTimeoutMs: 20000,
+    providerTemperature: 0.2,
+    providerTopP: 1,
+    providerMaxTokens: 1200,
+    providerReasoningEffort: "medium",
+    detailLevel: "balanced",
+    professionalLevel: "intermediate",
+    occupation: "developer",
+    sections: ["summary", "usage"],
+    userGoal: "",
+    knowledgeTopK: 3,
+    customInstructions: "",
+    preprocessIncludeAllCandidates: true,
+    ...overrides
+  };
+}
 
 test("extractGlossaryEntries finds key symbols", () => {
   const sourceCode = [
@@ -373,6 +405,7 @@ test("symbol preprocess builder writes batch results into file cache", async () 
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 20000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -384,7 +417,8 @@ test("symbol preprocess builder writes batch results into file cache", async () 
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessIncludeAllCandidates: true
     },
     glossaryEntries,
     workspaceStore: store,
@@ -489,6 +523,7 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 20000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -500,7 +535,8 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessIncludeAllCandidates: true
     },
     glossaryEntries,
     candidatePool,
@@ -620,6 +656,7 @@ test("symbol preprocess builder ignores placeholder cache entries", async () => 
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 20000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -631,7 +668,8 @@ test("symbol preprocess builder ignores placeholder cache entries", async () => 
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessIncludeAllCandidates: true
     },
     glossaryEntries,
     workspaceStore: store,
@@ -857,6 +895,7 @@ test("openai provider normalizes preprocess candidate selections", async () => {
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 1000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -868,7 +907,8 @@ test("openai provider normalizes preprocess candidate selections", async () => {
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessIncludeAllCandidates: true
     });
     const candidatePool = buildPreprocessCandidatePool(glossaryEntries);
     const response = await provider.selectPreprocessCandidates!({
@@ -941,6 +981,7 @@ test("openai provider normalizes section items from remote json", async () => {
       providerBaseUrl: "https://example.com/v1",
       providerModel: "gpt-5.4",
       providerApiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY",
+      providerFallbacks: [],
       providerTimeoutMs: 1000,
       providerTemperature: 0.2,
       providerTopP: 1,
@@ -952,7 +993,8 @@ test("openai provider normalizes section items from remote json", async () => {
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessIncludeAllCandidates: true
     });
     const response = await provider.explain({
       requestId: "remote-json",
@@ -985,5 +1027,262 @@ test("openai provider normalizes section items from remote json", async () => {
     globalThis.fetch = originalFetch;
     delete process.env.TEST_OPENAI_PROVIDER_KEY;
   }
+});
+
+test("openai provider retries fallback endpoints when the primary endpoint fails", async () => {
+  const originalFetch = globalThis.fetch;
+  process.env.TEST_OPENAI_PROVIDER_KEY = "primary-key";
+  process.env.TEST_OPENAI_PROVIDER_KEY_FALLBACK = "fallback-key";
+  const requestedUrls: string[] = [];
+
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = String(input);
+    requestedUrls.push(url);
+
+    if (url.startsWith("https://primary.example.com")) {
+      return new Response("primary failed", {
+        status: 500,
+        headers: {
+          "Content-Type": "text/plain"
+        }
+      });
+    }
+
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                title: "Fallback Success",
+                summary: "备用接口返回成功。",
+                sections: [],
+                suggestedQuestions: [],
+                glossaryHints: []
+              })
+            }
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    const provider = new OpenAICompatibleProvider(
+      createRemoteSettings({
+        providerBaseUrl: "https://primary.example.com/v1",
+        providerApiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY",
+        providerFallbacks: [
+          {
+            baseUrl: "https://fallback.example.com/v1",
+            model: "gpt-5.4",
+            apiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY_FALLBACK"
+          }
+        ],
+        providerTimeoutMs: 1000
+      })
+    );
+    const response = await provider.explain({
+      requestId: "fallback-explain",
+      reason: "manual",
+      languageId: "typescript",
+      filePath: "D:/workspace/src/example.ts",
+      relativeFilePath: "src/example.ts",
+      selectedText: "featureMap",
+      selectionPreview: "const [[featureMap]] = buildFeatureMap(values);",
+      granularity: "token",
+      detailLevel: "balanced",
+      occupation: "developer",
+      professionalLevel: "intermediate",
+      sections: ["summary"],
+      userGoal: "",
+      customInstructions: "",
+      contextBefore: "",
+      contextAfter: "",
+      glossaryEntries: [],
+      knowledgeSnippets: []
+    });
+
+    assert.equal(response.source, "openai-compatible");
+    assert.equal(response.summary, "备用接口返回成功。");
+    assert.ok(requestedUrls.some((url) => url.startsWith("https://primary.example.com")));
+    assert.ok(requestedUrls.some((url) => url.startsWith("https://fallback.example.com")));
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.TEST_OPENAI_PROVIDER_KEY;
+    delete process.env.TEST_OPENAI_PROVIDER_KEY_FALLBACK;
+  }
+});
+
+test("symbol preprocess smoke uses full file context and verifies remote inference", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-symbol-preprocess-smoke-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const sourceFilePath = path.join(process.cwd(), "src", "providers", "localProvider.ts");
+  const sourceCode = await fs.readFile(sourceFilePath, "utf8");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "typescript");
+  const candidatePool = buildPreprocessCandidatePool(glossaryEntries);
+  const requestBodies: Array<Record<string, unknown>> = [];
+  process.env.TEST_OPENAI_PROVIDER_KEY = "smoke-key";
+
+  const server = createServer(async (req, res) => {
+    let body = "";
+
+    for await (const chunk of req) {
+      body += chunk;
+    }
+
+    const payload = JSON.parse(body) as Record<string, unknown>;
+    requestBodies.push(payload);
+    const messages = Array.isArray(payload.messages)
+      ? (payload.messages as Array<{ content?: string }>)
+      : [];
+    const userPrompt = messages[1]?.content ?? "";
+    const terms = Array.from(
+      userPrompt.matchAll(/^- (.+?) \| category=/gm),
+      (match) => match[1]
+    );
+    const entries = terms.map((term) => ({
+      term,
+      summary: `${term} remote summary`
+    }));
+
+    res.writeHead(200, {
+      "Content-Type": "application/json"
+    });
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                entries
+              })
+            }
+          }
+        ]
+      })
+    );
+  });
+
+  try {
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const settings = createRemoteSettings({
+      providerBaseUrl: `http://127.0.0.1:${address.port}/v1`,
+      providerModel: "mock-gpt-5.4",
+      providerApiKeyEnvVar: "TEST_OPENAI_PROVIDER_KEY",
+      providerTimeoutMs: 2000
+    });
+    const provider = new OpenAICompatibleProvider(settings);
+    const result = await buildSymbolPreprocessCache({
+      editorText: sourceCode,
+      languageId: "typescript",
+      filePath: sourceFilePath,
+      relativeFilePath: "src/providers/localProvider.ts",
+      settings,
+      glossaryEntries,
+      candidatePool,
+      workspaceStore: store,
+      provider
+    });
+
+    assert.ok(candidatePool.length > 0);
+    assert.ok(result);
+    assert.equal(result?.source, "openai-compatible");
+    assert.equal(result?.selectionMode, "all-candidates");
+    assert.equal(result?.selectionSource, "all-candidates");
+    assert.equal(result?.verifiedRemoteInference, true);
+    assert.equal(result?.candidates.length, candidatePool.length);
+    assert.equal(result?.cacheFile.entries.length, candidatePool.length);
+    assert.equal(result?.cacheFile.selectionMode, "all-candidates");
+    assert.equal(result?.cacheFile.selectedCandidateCount, candidatePool.length);
+    assert.equal(result?.cacheFile.verifiedRemoteInference, true);
+    assert.ok(requestBodies.length >= 1);
+    assert.equal(requestBodies[0]?.model, "mock-gpt-5.4");
+    const firstPrompt = String(
+      ((requestBodies[0]?.messages as Array<{ content?: string }> | undefined)?.[1]?.content ??
+        "")
+    );
+    assert.match(firstPrompt, /Full file context:/);
+    assert.match(firstPrompt, /class LocalExplanationProvider/);
+  } finally {
+    server.close();
+    delete process.env.TEST_OPENAI_PROVIDER_KEY;
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("symbol preprocess builder rejects incomplete remote responses", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-symbol-preprocess-incomplete-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const sourceCode = [
+    "const featureMap = buildFeatureMap(values);",
+    "function buildFeatureMap(input) { return input; }",
+    "class EmbeddingModel {}"
+  ].join("\n");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "typescript");
+  const candidatePool = buildPreprocessCandidatePool(glossaryEntries);
+  const provider = {
+    id: "openai-compatible",
+    async explain() {
+      throw new Error("unused");
+    },
+    async answerFollowUp() {
+      return {
+        answer: "unused",
+        suggestedQuestions: [],
+        source: "openai-compatible",
+        latencyMs: 1
+      };
+    },
+    async preprocessSymbols(request: SymbolPreprocessRequest) {
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        source: "openai-compatible",
+        latencyMs: 20,
+        entries: request.candidates.slice(0, 1).map((candidate) => ({
+          term: candidate.term,
+          normalizedTerm: candidate.normalizedTerm,
+          category: candidate.category,
+          sourceLine: candidate.sourceLine,
+          summary: candidate.term + " summary",
+          generatedAt: new Date().toISOString()
+        }))
+      };
+    }
+  };
+
+  await assert.rejects(
+    () =>
+      buildSymbolPreprocessCache({
+        editorText: sourceCode,
+        languageId: "typescript",
+        filePath: "D:/workspace/src/example.ts",
+        relativeFilePath: "src/example.ts",
+        settings: createRemoteSettings(),
+        glossaryEntries,
+        candidatePool,
+        workspaceStore: store,
+        provider
+      }),
+    /Remote preprocess response was incomplete/
+  );
+
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 

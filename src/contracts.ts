@@ -2,6 +2,7 @@ export type DetailLevel = "fast" | "balanced" | "deep";
 export type ProfessionalLevel = "beginner" | "intermediate" | "expert";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type ProviderId = "local" | "openai-compatible";
+export type PreprocessSelectionMode = "all-candidates" | "audience-filtered";
 export type Occupation =
   | "student"
   | "developer"
@@ -50,6 +51,12 @@ export type PreprocessStatus =
   | "failed"
   | "canceled";
 
+export interface ProviderFallback {
+  baseUrl: string;
+  model: string;
+  apiKeyEnvVar: string;
+}
+
 export interface ExtensionSettings {
   autoExplainEnabled: boolean;
   autoExplainDelayMs: number;
@@ -58,6 +65,7 @@ export interface ExtensionSettings {
   providerBaseUrl: string;
   providerModel: string;
   providerApiKeyEnvVar: string;
+  providerFallbacks: ProviderFallback[];
   providerTimeoutMs: number;
   providerTemperature: number;
   providerTopP: number;
@@ -70,6 +78,7 @@ export interface ExtensionSettings {
   userGoal: string;
   knowledgeTopK: number;
   customInstructions: string;
+  preprocessIncludeAllCandidates: boolean;
 }
 
 export interface GlossaryEntry {
@@ -228,6 +237,12 @@ export interface PreprocessedSymbolCacheFile {
   sourceHash: string;
   generatedAt: string;
   entries: PreprocessedSymbolEntry[];
+  candidatePoolCount?: number;
+  selectedCandidateCount?: number;
+  selectionMode?: PreprocessSelectionMode;
+  selectionSource?: string;
+  inferenceSource?: string;
+  verifiedRemoteInference?: boolean;
 }
 
 export interface SymbolPreprocessRequest {
@@ -309,4 +324,8 @@ export interface PreprocessProgress {
   sourceHash?: string;
   startedAt?: string;
   completedAt?: string;
+  selectionMode?: PreprocessSelectionMode;
+  selectionSource?: string;
+  providerSource?: string;
+  verifiedRemoteInference?: boolean;
 }

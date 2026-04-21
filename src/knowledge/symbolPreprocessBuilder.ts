@@ -3,6 +3,7 @@
   ExplanationResponse,
   ExtensionSettings,
   GlossaryEntry,
+  PreprocessSelectionMode,
   PreprocessCandidateSelectionRequest,
   PreprocessedSymbolCacheFile,
   PreprocessedSymbolCandidate,
@@ -47,6 +48,9 @@ export interface SymbolPreprocessResult {
   cacheFile: PreprocessedSymbolCacheFile;
   candidates: PreprocessedSymbolCandidate[];
   source: string;
+  selectionMode: PreprocessSelectionMode;
+  selectionSource: string;
+  verifiedRemoteInference: boolean;
 }
 
 export function buildCachedPreprocessExplanation(
@@ -101,11 +105,13 @@ export async function buildSymbolPreprocessCache(
     })
   );
 
-  const selectedCandidates = await selectCandidatesForPreprocess(
-    options,
-    candidatePool,
-    sourceHash
-  );
+  const selectionMode: PreprocessSelectionMode = options.settings.preprocessIncludeAllCandidates
+    ? "all-candidates"
+    : "audience-filtered";
+  const selection = options.settings.preprocessIncludeAllCandidates
+    ? selectAllCandidatesForPreprocess(options, candidatePool, sourceHash)
+    : await selectCandidatesForPreprocess(options, candidatePool, sourceHash);
+  const selectedCandidates = selection.candidates;
   const existingCache = await preprocessStore.read(options.relativeFilePath);
   const selectedCandidateTerms = new Set(
     selectedCandidates.map((candidate) => candidate.normalizedTerm)
@@ -128,7 +134,13 @@ export async function buildSymbolPreprocessCache(
       relativeFilePath: options.relativeFilePath,
       sourceHash,
       generatedAt: new Date().toISOString(),
-      entries: []
+      entries: [],
+      candidatePoolCount: candidatePool.length,
+      selectedCandidateCount: 0,
+      selectionMode,
+      selectionSource: selection.source,
+      inferenceSource: "none",
+      verifiedRemoteInference: false
     };
     await preprocessStore.write(options.relativeFilePath, emptyCache);
     options.onCacheUpdate?.(emptyCache);
@@ -137,14 +149,24 @@ export async function buildSymbolPreprocessCache(
         status: "completed",
         completedSteps: 5,
         currentStep: "Completed",
-        message: "No file-local symbols were selected for the current audience profile."
+        message:
+          selectionMode === "all-candidates"
+            ? "No preprocessable file-local symbols were found."
+            : "No file-local symbols were selected for the current audience profile.",
+        selectionMode,
+        selectionSource: selection.source,
+        providerSource: "none",
+        verifiedRemoteInference: false
       })
     );
 
     return {
       cacheFile: emptyCache,
       candidates: [],
-      source: "empty"
+      source: "empty",
+      selectionMode,
+      selectionSource: selection.source,
+      verifiedRemoteInference: false
     };
   }
 
@@ -152,13 +174,27 @@ export async function buildSymbolPreprocessCache(
     const normalizedCache = buildCacheFile(
       options,
       sourceHash,
-      sortPreprocessEntries(cachedEntries, selectedCandidates)
+      sortPreprocessEntries(cachedEntries, selectedCandidates),
+      {
+        candidatePoolCount: candidatePool.length,
+        selectedCandidateCount: selectedCandidates.length,
+        selectionMode,
+        selectionSource: selection.source,
+        inferenceSource: existingCache?.inferenceSource ?? "cache",
+        verifiedRemoteInference:
+          existingCache?.verifiedRemoteInference ??
+          (existingCache?.inferenceSource === "openai-compatible")
+      }
     );
 
     if (
       !existingCache ||
       existingCache.sourceHash !== sourceHash ||
-      existingCache.entries.length !== normalizedCache.entries.length
+      existingCache.entries.length !== normalizedCache.entries.length ||
+      existingCache.selectionMode !== normalizedCache.selectionMode ||
+      existingCache.selectionSource !== normalizedCache.selectionSource ||
+      existingCache.inferenceSource !== normalizedCache.inferenceSource ||
+      existingCache.verifiedRemoteInference !== normalizedCache.verifiedRemoteInference
     ) {
       await preprocessStore.write(options.relativeFilePath, normalizedCache);
       options.onCacheUpdate?.(normalizedCache);
@@ -177,7 +213,11 @@ export async function buildSymbolPreprocessCache(
           batchCount: Math.max(1, Math.ceil(selectedCandidates.length / PREPROCESS_CHUNK_SIZE)),
           processedBatches: Math.max(1, Math.ceil(selectedCandidates.length / PREPROCESS_CHUNK_SIZE)),
           currentStep: "Completed",
-          message: `Loaded ${normalizedCache.entries.length} cached wordbook entries.`
+          message: `Loaded ${normalizedCache.entries.length} cached wordbook entries.`,
+          selectionMode,
+          selectionSource: selection.source,
+          providerSource: normalizedCache.inferenceSource ?? "cache",
+          verifiedRemoteInference: normalizedCache.verifiedRemoteInference ?? false
         }
       )
     );
@@ -185,7 +225,10 @@ export async function buildSymbolPreprocessCache(
     return {
       cacheFile: normalizedCache,
       candidates: selectedCandidates,
-      source: "cache"
+      source: "cache",
+      selectionMode,
+      selectionSource: selection.source,
+      verifiedRemoteInference: normalizedCache.verifiedRemoteInference ?? false
     };
   }
 
@@ -194,6 +237,7 @@ export async function buildSymbolPreprocessCache(
   let remainingCandidates = [...missingCandidates];
   let processedBatches = 0;
   let responseSource = options.provider.id;
+  let verifiedRemoteInference = false;
 
   while (remainingCandidates.length > 0) {
     const nextChunk = takeNextPreprocessChunk(
@@ -215,7 +259,10 @@ export async function buildSymbolPreprocessCache(
           batchCount: totalBatchCount,
           processedBatches,
           currentStep: "Preprocessing wordbook chunk",
-          message: `Processing batch ${processedBatches + 1} / ${totalBatchCount} with ${nextChunk.length} terms.`
+          message: `Processing batch ${processedBatches + 1} / ${totalBatchCount} with ${nextChunk.length} terms.`,
+          selectionMode,
+          selectionSource: selection.source,
+          providerSource: responseSource
         }
       )
     );
@@ -228,7 +275,15 @@ export async function buildSymbolPreprocessCache(
     );
     responseSource = response.source;
 
+    if (response.source !== "openai-compatible") {
+      throw new Error(
+        `Preprocess inference was expected to use the remote API, but the provider reported source=${response.source}.`
+      );
+    }
+
     const normalizedChunkEntries = normalizePreprocessEntries(nextChunk, response.entries);
+    assertCompleteChunkResponse(nextChunk, normalizedChunkEntries);
+    verifiedRemoteInference = true;
 
     for (const entry of normalizedChunkEntries) {
       mergedEntries.set(entry.normalizedTerm, entry);
@@ -242,7 +297,15 @@ export async function buildSymbolPreprocessCache(
     const partialCache = buildCacheFile(
       options,
       sourceHash,
-      sortPreprocessEntries(Array.from(mergedEntries.values()), selectedCandidates)
+      sortPreprocessEntries(Array.from(mergedEntries.values()), selectedCandidates),
+      {
+        candidatePoolCount: candidatePool.length,
+        selectedCandidateCount: selectedCandidates.length,
+        selectionMode,
+        selectionSource: selection.source,
+        inferenceSource: responseSource,
+        verifiedRemoteInference
+      }
     );
     await preprocessStore.write(options.relativeFilePath, partialCache);
     options.onCacheUpdate?.(partialCache);
@@ -259,7 +322,11 @@ export async function buildSymbolPreprocessCache(
           batchCount: totalBatchCount,
           processedBatches,
           currentStep: "Preprocessing wordbook chunk",
-          message: `Completed batch ${processedBatches} / ${totalBatchCount}. Cached ${partialCache.entries.length} entries.`
+          message: `Completed batch ${processedBatches} / ${totalBatchCount}. Cached ${partialCache.entries.length} entries.`,
+          selectionMode,
+          selectionSource: selection.source,
+          providerSource: responseSource,
+          verifiedRemoteInference
         }
       )
     );
@@ -271,7 +338,15 @@ export async function buildSymbolPreprocessCache(
     sortPreprocessEntries(
       normalizePreprocessEntries(selectedCandidates, Array.from(mergedEntries.values())),
       selectedCandidates
-    )
+    ),
+    {
+      candidatePoolCount: candidatePool.length,
+      selectedCandidateCount: selectedCandidates.length,
+      selectionMode,
+      selectionSource: selection.source,
+      inferenceSource: responseSource,
+      verifiedRemoteInference
+    }
   );
 
   options.onProgress?.(
@@ -287,7 +362,11 @@ export async function buildSymbolPreprocessCache(
         batchCount: totalBatchCount,
         processedBatches,
         currentStep: "Finalizing cache",
-        message: `Finalizing ${cacheFile.entries.length} wordbook entries.`
+        message: `Finalizing ${cacheFile.entries.length} wordbook entries.`,
+        selectionMode,
+        selectionSource: selection.source,
+        providerSource: responseSource,
+        verifiedRemoteInference
       }
     )
   );
@@ -301,7 +380,10 @@ export async function buildSymbolPreprocessCache(
     selectedCount: selectedCandidates.length,
     batchCount: totalBatchCount,
     symbolCount: cacheFile.entries.length,
-    source: options.provider.id
+    selectionMode,
+    selectionSource: selection.source,
+    source: responseSource,
+    verifiedRemoteInference
   });
 
   options.onProgress?.(
@@ -317,7 +399,11 @@ export async function buildSymbolPreprocessCache(
         batchCount: totalBatchCount,
         processedBatches,
         currentStep: "Completed",
-        message: `Preprocessed ${cacheFile.entries.length} wordbook entries in ${totalBatchCount} batches.`
+        message: `Preprocessed ${cacheFile.entries.length} wordbook entries in ${totalBatchCount} batches.`,
+        selectionMode,
+        selectionSource: selection.source,
+        providerSource: responseSource,
+        verifiedRemoteInference
       }
     )
   );
@@ -325,7 +411,10 @@ export async function buildSymbolPreprocessCache(
   return {
     cacheFile,
     candidates: selectedCandidates,
-    source: responseSource
+    source: responseSource,
+    selectionMode,
+    selectionSource: selection.source,
+    verifiedRemoteInference
   };
 }
 
@@ -333,9 +422,15 @@ async function selectCandidatesForPreprocess(
   options: BuildSymbolPreprocessOptions,
   candidatePool: PreprocessedSymbolCandidate[],
   sourceHash: string
-): Promise<PreprocessedSymbolCandidate[]> {
+): Promise<{
+  candidates: PreprocessedSymbolCandidate[];
+  source: string;
+}> {
   if (candidatePool.length === 0) {
-    return [];
+    return {
+      candidates: [],
+      source: "empty"
+    };
   }
 
   const rankedCandidates = rankPreprocessCandidatesForAudience(
@@ -355,7 +450,10 @@ async function selectCandidatesForPreprocess(
       batchCount: 0,
       processedBatches: 0,
       currentStep: "Selecting wordbook terms",
-      message: `Selecting ${targetSelectionCount} wordbook terms from ${candidatePool.length} candidates.`
+      message: `Selecting ${targetSelectionCount} wordbook terms from ${candidatePool.length} candidates.`,
+      selectionMode: "audience-filtered",
+      selectionSource: "pending-remote-selection",
+      providerSource: options.provider.id
     })
   );
 
@@ -405,12 +503,18 @@ async function selectCandidatesForPreprocess(
             batchCount: 0,
             processedBatches: 0,
             currentStep: "Selecting wordbook terms",
-            message: `Selected ${selectedCandidates.length} wordbook terms from ${candidatePool.length} candidates.`
+            message: `Selected ${selectedCandidates.length} wordbook terms from ${candidatePool.length} candidates.`,
+            selectionMode: "audience-filtered",
+            selectionSource: response.source,
+            providerSource: response.source
           }
         )
       );
 
-      return selectedCandidates;
+      return {
+        candidates: selectedCandidates,
+        source: response.source
+      };
     } catch (error) {
       if (isAbortLikeError(error)) {
         throw error;
@@ -443,12 +547,46 @@ async function selectCandidatesForPreprocess(
         batchCount: 0,
         processedBatches: 0,
         currentStep: "Selecting wordbook terms",
-        message: `Used local fallback to select ${fallbackCandidates.length} wordbook terms from ${candidatePool.length} candidates.`
+        message: `Used local fallback to select ${fallbackCandidates.length} wordbook terms from ${candidatePool.length} candidates.`,
+        selectionMode: "audience-filtered",
+        selectionSource: "local-fallback",
+        providerSource: options.provider.id
       }
     )
   );
 
-  return fallbackCandidates;
+  return {
+    candidates: fallbackCandidates,
+    source: "local-fallback"
+  };
+}
+
+function selectAllCandidatesForPreprocess(
+  options: BuildSymbolPreprocessOptions,
+  candidatePool: PreprocessedSymbolCandidate[],
+  sourceHash: string
+): {
+  candidates: PreprocessedSymbolCandidate[];
+  source: string;
+} {
+  options.onProgress?.(
+    createProgress(candidatePool.length, candidatePool.length, 0, sourceHash, options.relativeFilePath, {
+      status: "running",
+      completedSteps: 2,
+      batchCount: 0,
+      processedBatches: 0,
+      currentStep: "Selecting wordbook terms",
+      message: `Configured to preprocess all ${candidatePool.length} file-local symbols.`,
+      selectionMode: "all-candidates",
+      selectionSource: "all-candidates",
+      providerSource: options.provider.id
+    })
+  );
+
+  return {
+    candidates: candidatePool,
+    source: "all-candidates"
+  };
 }
 
 function buildSelectionRequest(
@@ -573,14 +711,24 @@ function takeNextPreprocessChunk(
 function buildCacheFile(
   options: BuildSymbolPreprocessOptions,
   sourceHash: string,
-  entries: PreprocessedSymbolEntry[]
+  entries: PreprocessedSymbolEntry[],
+  metadata?: Pick<
+    PreprocessedSymbolCacheFile,
+    | "candidatePoolCount"
+    | "selectedCandidateCount"
+    | "selectionMode"
+    | "selectionSource"
+    | "inferenceSource"
+    | "verifiedRemoteInference"
+  >
 ): PreprocessedSymbolCacheFile {
   return {
     languageId: options.languageId,
     relativeFilePath: options.relativeFilePath,
     sourceHash,
     generatedAt: new Date().toISOString(),
-    entries
+    entries,
+    ...metadata
   };
 }
 
@@ -660,6 +808,26 @@ function createProgress(
     startedAt: new Date().toISOString(),
     ...overrides
   };
+}
+
+function assertCompleteChunkResponse(
+  requestedCandidates: PreprocessedSymbolCandidate[],
+  normalizedEntries: PreprocessedSymbolEntry[]
+): void {
+  const returnedTerms = new Set(
+    normalizedEntries.map((entry) => entry.normalizedTerm)
+  );
+  const missingTerms = requestedCandidates
+    .filter((candidate) => !returnedTerms.has(candidate.normalizedTerm))
+    .map((candidate) => candidate.term);
+
+  if (missingTerms.length > 0) {
+    throw new Error(
+      `Remote preprocess response was incomplete. Missing ${missingTerms.length} terms: ${missingTerms
+        .slice(0, 8)
+        .join(", ")}`
+    );
+  }
 }
 
 function isPlaceholderPreprocessEntry(entry: PreprocessedSymbolEntry): boolean {

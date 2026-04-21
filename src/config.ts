@@ -4,6 +4,7 @@ import {
   ExplanationSectionName,
   ExtensionSettings,
   Occupation,
+  ProviderFallback,
   ProviderId,
   ProfessionalLevel,
   ReasoningEffort
@@ -62,6 +63,7 @@ export function getSettings(): ExtensionSettings {
       readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_API_KEY_ENV_VAR") ??
         "READ_CODE_IN_CHINESE_API_KEY"
     ),
+    providerFallbacks: readProviderFallbacksEnv("READ_CODE_IN_CHINESE_PROVIDER_FALLBACKS") ?? [],
     providerTimeoutMs: getConfiguredValue<number>(
       configuration,
       "provider.timeoutMs",
@@ -126,6 +128,11 @@ export function getSettings(): ExtensionSettings {
       configuration,
       "prompt.customInstructions",
       readStringEnv("READ_CODE_IN_CHINESE_PROMPT_CUSTOM_INSTRUCTIONS") ?? ""
+    ),
+    preprocessIncludeAllCandidates: getConfiguredValue<boolean>(
+      configuration,
+      "preprocess.includeAllCandidates",
+      readBooleanEnv("READ_CODE_IN_CHINESE_PREPROCESS_INCLUDE_ALL_CANDIDATES") ?? true
     )
   };
 }
@@ -191,4 +198,34 @@ function readStringArrayEnv(name: string): string[] | undefined {
     .filter(Boolean);
 
   return parsed.length ? parsed : undefined;
+}
+
+function readProviderFallbacksEnv(name: string): ProviderFallback[] | undefined {
+  const value = readStringEnv(name);
+
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+
+    if (!Array.isArray(parsed)) {
+      return undefined;
+    }
+
+    return parsed
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+      .map((entry) => ({
+        baseUrl: typeof entry.baseUrl === "string" ? entry.baseUrl.trim() : "",
+        model: typeof entry.model === "string" ? entry.model.trim() : "",
+        apiKeyEnvVar:
+          typeof entry.apiKeyEnvVar === "string" ? entry.apiKeyEnvVar.trim() : ""
+      }))
+      .filter(
+        (entry) => Boolean(entry.baseUrl) && Boolean(entry.model) && Boolean(entry.apiKeyEnvVar)
+      );
+  } catch {
+    return undefined;
+  }
 }

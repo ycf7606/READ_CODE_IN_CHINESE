@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0 - 2026-04-21
+
+- Established the first stable repository release baseline
+- Switched file wordbook preprocessing to full file-local candidate coverage by default
+- Added strict remote-inference verification for wordbook preprocessing and fail-fast handling for incomplete remote batches
+- Added fallback-endpoint retry support for OpenAI-compatible requests
+- Added regression coverage for fallback retries, verified preprocess smoke runs, and incomplete preprocess response rejection
+- Hardened the development test command for the current Windows environment
+
 ## Unreleased - 2026-04-14
 
 - Hid batch counters during candidate-pool preparation and selection so the panel no longer shows misleading `0 / N` batch progress before real preprocessing starts

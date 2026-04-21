@@ -89,6 +89,7 @@
 - `readCodeInChinese.provider.topP`
 - `readCodeInChinese.provider.maxTokens`
 - `readCodeInChinese.provider.reasoningEffort`
+- `readCodeInChinese.preprocess.includeAllCandidates`
 
 ### Explanation Output
 
@@ -126,6 +127,10 @@ Use `readCodeInChinese.provider.id = openai-compatible` and set:
 - `readCodeInChinese.provider.topP`
 - `readCodeInChinese.provider.maxTokens`
 - environment variable named by `readCodeInChinese.provider.apiKeyEnvVar`
+
+Optional:
+
+- `READ_CODE_IN_CHINESE_PROVIDER_FALLBACKS` as a JSON array of backup OpenAI-compatible endpoints with `baseUrl`, `model`, and `apiKeyEnvVar`
 
 Example in PowerShell:
 
@@ -182,13 +187,14 @@ When the remote provider is enabled, the extension can preprocess the active fil
 
 - Preprocess cache path: `.read-code-in-chinese/preprocess/<file>.json`
 - Command: `Read Code In Chinese: Preprocess Current File Symbols`
-- When a remote provider is enabled, a dedicated API selection pass chooses wordbook terms from the raw file candidate pool using full-file context, `professionalLevel`, and `occupation`
-- Selection retention now stays broad by default: `beginner` keeps all candidates, `intermediate` keeps about 85%, and `expert` keeps about 70%
-- The second pass preprocesses only the selected terms into short wordbook-style entries
+- By default, preprocessing now sends all file-local symbol candidates to the remote provider instead of pruning the wordbook first
+- `readCodeInChinese.preprocess.includeAllCandidates = false` restores the earlier audience-filtered selection pass
 - Wordbook preprocessing runs in chunks of about 20 terms, writes partial cache results after each chunk, and keeps reprioritizing remaining chunks around the areas the user is repeatedly reading
 - Wordbook preprocess prompts now force a fast remote path with low reasoning effort and shorter batch outputs
+- Each chunk now validates that the remote API returned every requested term; incomplete responses fail instead of silently caching partial results
+- If the primary remote endpoint fails, configured fallback endpoints are retried automatically before preprocessing is marked failed
 - Preprocess prompt shaping ignores explanation section preferences such as `summary`, `usage`, or `risk`
-- Local heuristics remain only as a fallback when the provider cannot perform the selection pass
+- The preprocess UI now surfaces selection mode, inference source, and whether remote inference was verified
 - The explanation panel shows 5-step preprocess progress with distinct candidate-pool, selected-target, cached-entry, and batch counts, and it does not display batch counters during the earlier selection phase
 - The explanation panel shows the full file wordbook sourced from the current file preprocess cache instead of a short preview slice
 - Legacy placeholder cache entries from older builds are removed automatically when the file is reopened, so stale partial caches do not appear complete

@@ -834,6 +834,26 @@ export class ExplanationPanel implements vscode.Disposable {
                 progress.batchCount
             );
           }
+          if (progress.selectionMode) {
+            lines.push(
+              "Selection mode: " +
+                (progress.selectionMode === "all-candidates"
+                  ? "all file-local symbols"
+                  : "audience-filtered")
+            );
+          }
+          if (progress.selectionSource) {
+            lines.push("Selection source: " + progress.selectionSource);
+          }
+          if (progress.providerSource) {
+            lines.push("Inference source: " + progress.providerSource);
+          }
+          if (typeof progress.verifiedRemoteInference === "boolean") {
+            lines.push(
+              "Remote inference verified: " +
+                (progress.verifiedRemoteInference ? "yes" : "no")
+            );
+          }
           if (progress.currentStep) {
             lines.push("Step: " + progress.currentStep);
           }

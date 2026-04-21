@@ -55,6 +55,7 @@ type SettingsMessage =
         maxTokens: number;
         reasoningEffort: ReasoningEffort;
         autoExplainEnabled: boolean;
+        preprocessIncludeAllCandidates: boolean;
       };
     };
 
@@ -361,6 +362,10 @@ export class SettingsPanel implements vscode.Disposable {
           <input id="autoExplainEnabled" type="checkbox" style="width:auto;" />
           <span>Enable auto explain</span>
         </label>
+        <label style="margin-top: 10px; display: inline-flex; align-items: center; gap: 8px;">
+          <input id="preprocessIncludeAllCandidates" type="checkbox" style="width:auto;" />
+          <span>Preprocess all file-local tokens</span>
+        </label>
       </section>
 
       <section class="card">
@@ -408,6 +413,7 @@ export class SettingsPanel implements vscode.Disposable {
       const topP = document.getElementById("topP");
       const maxTokens = document.getElementById("maxTokens");
       const autoExplainEnabled = document.getElementById("autoExplainEnabled");
+      const preprocessIncludeAllCandidates = document.getElementById("preprocessIncludeAllCandidates");
       const generatePromptButton = document.getElementById("generatePromptButton");
       const runPreprocessButton = document.getElementById("runPreprocessButton");
       const saveButton = document.getElementById("saveButton");
@@ -450,6 +456,7 @@ export class SettingsPanel implements vscode.Disposable {
         topP.value = String(settings.providerTopP);
         maxTokens.value = String(settings.providerMaxTokens);
         autoExplainEnabled.checked = Boolean(settings.autoExplainEnabled);
+        preprocessIncludeAllCandidates.checked = Boolean(settings.preprocessIncludeAllCandidates);
         setSections(settings.sections || []);
       });
 
@@ -498,7 +505,8 @@ export class SettingsPanel implements vscode.Disposable {
             topP: Number(topP.value),
             maxTokens: Number(maxTokens.value),
             reasoningEffort: reasoningEffort.value,
-            autoExplainEnabled: autoExplainEnabled.checked
+            autoExplainEnabled: autoExplainEnabled.checked,
+            preprocessIncludeAllCandidates: preprocessIncludeAllCandidates.checked
           }
         });
       });

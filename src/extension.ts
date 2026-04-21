@@ -1407,19 +1407,85 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    if (getSettings().providerId !== "openai-compatible") {
+    const settings = getSettings();
+
+    if (settings.providerId !== "openai-compatible") {
       return;
     }
 
-    const provider = createProvider(getSettings(), logger);
+    const sourceText = editor.document.getText();
+    const sourceHash = createContentHash(sourceText);
+    const remoteReadinessError = getRemotePreprocessReadinessError(settings);
 
-    if (!provider.preprocessSymbols) {
+    if (remoteReadinessError) {
+      sessionState.preprocessProgress = {
+        status: "failed",
+        totalCandidates: 0,
+        processedCandidates: 0,
+        totalSteps: 5,
+        completedSteps: 0,
+        batchCount: 0,
+        relativeFilePath: projectContext.relativeFilePath,
+        currentStep: "Checking remote provider",
+        message: remoteReadinessError,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        selectionMode: settings.preprocessIncludeAllCandidates
+          ? "all-candidates"
+          : "audience-filtered",
+        selectionSource: "preflight-check",
+        providerSource: "configuration"
+      };
+      panel.setState({
+        preprocessProgress: sessionState.preprocessProgress,
+        wordbookEntries: getVisibleWordbookEntries(editor)
+      });
+
+      if (showNotifications) {
+        await vscode.window.showWarningMessage(
+          `Read Code In Chinese: preprocessing failed. ${remoteReadinessError}`
+        );
+      }
+      return;
+    }
+
+    const provider = createProvider(settings, logger);
+
+    if (provider.id !== "openai-compatible" || !provider.preprocessSymbols) {
+      const providerError =
+        "Preprocess requires a reachable OpenAI-compatible provider, but the extension did not resolve one.";
+      sessionState.preprocessProgress = {
+        status: "failed",
+        totalCandidates: 0,
+        processedCandidates: 0,
+        totalSteps: 5,
+        completedSteps: 0,
+        batchCount: 0,
+        relativeFilePath: projectContext.relativeFilePath,
+        currentStep: "Checking remote provider",
+        message: providerError,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        selectionMode: settings.preprocessIncludeAllCandidates
+          ? "all-candidates"
+          : "audience-filtered",
+        selectionSource: "provider-resolution",
+        providerSource: provider.id
+      };
+      panel.setState({
+        preprocessProgress: sessionState.preprocessProgress,
+        wordbookEntries: getVisibleWordbookEntries(editor)
+      });
+
+      if (showNotifications) {
+        await vscode.window.showWarningMessage(
+          `Read Code In Chinese: preprocessing failed. ${providerError}`
+        );
+      }
       return;
     }
 
     const task = startTask("preprocess");
-    const sourceText = editor.document.getText();
-    const sourceHash = createContentHash(sourceText);
 
     if (
       sessionState.wordbookRelativeFilePath !== projectContext.relativeFilePath ||
@@ -1466,7 +1532,7 @@ export function activate(context: vscode.ExtensionContext): void {
         languageId: editor.document.languageId,
         filePath: editor.document.uri.fsPath,
         relativeFilePath: projectContext.relativeFilePath,
-        settings: getSettings(),
+        settings,
         glossaryEntries,
         candidatePool,
         workspaceStore: projectContext.workspaceStore,
@@ -1510,6 +1576,21 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       if (result) {
+        if (result.source !== "openai-compatible" || !result.verifiedRemoteInference) {
+          throw new Error(
+            "Preprocess finished without verified remote API inference."
+          );
+        }
+
+        if (
+          settings.preprocessIncludeAllCandidates &&
+          result.cacheFile.entries.length !== candidatePool.length
+        ) {
+          throw new Error(
+            `Expected ${candidatePool.length} preprocessable file-local symbols, but cached ${result.cacheFile.entries.length}.`
+          );
+        }
+
         setWordbookState(
           projectContext.relativeFilePath,
           result.cacheFile.sourceHash,
@@ -1522,7 +1603,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       if (result && showNotifications) {
         await vscode.window.showInformationMessage(
-          `Read Code In Chinese: preprocessed ${result.cacheFile.entries.length} symbols for ${projectContext.relativeFilePath}.`
+          `Read Code In Chinese: verified remote preprocessing for ${result.cacheFile.entries.length} symbols in ${projectContext.relativeFilePath}.`
         );
       }
     } catch (error) {
@@ -2024,14 +2105,55 @@ function summarizeSettings(settings: ReturnType<typeof getSettings>) {
     providerModel: settings.providerModel || "(empty)",
     providerApiKeyEnvVar: settings.providerApiKeyEnvVar,
     hasApiKey: Boolean(process.env[settings.providerApiKeyEnvVar]),
+    providerFallbackCount: settings.providerFallbacks.length,
     providerReasoningEffort: settings.providerReasoningEffort,
     detailLevel: settings.detailLevel,
     professionalLevel: settings.professionalLevel,
     occupation: settings.occupation,
     sections: settings.sections,
     autoExplainEnabled: settings.autoExplainEnabled,
-    autoOpenPanel: settings.autoOpenPanel
+    autoOpenPanel: settings.autoOpenPanel,
+    preprocessIncludeAllCandidates: settings.preprocessIncludeAllCandidates
   };
+}
+
+function getRemotePreprocessReadinessError(
+  settings: ReturnType<typeof getSettings>
+): string | undefined {
+  if (settings.providerId !== "openai-compatible") {
+    return "Remote preprocessing is disabled because provider.id is not openai-compatible.";
+  }
+
+  const primaryEndpointReady =
+    Boolean(settings.providerBaseUrl.trim()) &&
+    Boolean(settings.providerModel.trim()) &&
+    Boolean(settings.providerApiKeyEnvVar.trim()) &&
+    Boolean(process.env[settings.providerApiKeyEnvVar]);
+  const fallbackEndpointReady = settings.providerFallbacks.some(
+    (fallback) =>
+      Boolean(fallback.baseUrl.trim()) &&
+      Boolean(fallback.model.trim()) &&
+      Boolean(fallback.apiKeyEnvVar.trim()) &&
+      Boolean(process.env[fallback.apiKeyEnvVar])
+  );
+
+  if (primaryEndpointReady || fallbackEndpointReady) {
+    return undefined;
+  }
+
+  if (!settings.providerBaseUrl.trim() && !settings.providerFallbacks.length) {
+    return "Provider base URL is empty and no fallback endpoints are configured.";
+  }
+
+  if (!settings.providerModel.trim() && !settings.providerFallbacks.length) {
+    return "Provider model is empty and no fallback endpoints are configured.";
+  }
+
+  if (settings.providerApiKeyEnvVar.trim() && !process.env[settings.providerApiKeyEnvVar]) {
+    return `Environment variable ${settings.providerApiKeyEnvVar} is not set for the remote provider.`;
+  }
+
+  return "No usable remote preprocess endpoint is fully configured with base URL, model, and API key.";
 }
 
 function inferCurrentGranularity(
@@ -2094,6 +2216,7 @@ async function saveSettingsFromPanel(payload: {
   maxTokens: number;
   reasoningEffort: ReturnType<typeof getSettings>["providerReasoningEffort"];
   autoExplainEnabled: boolean;
+  preprocessIncludeAllCandidates: boolean;
 }): Promise<void> {
   const currentSettings = getSettings();
   const sanitizedProviderTimeoutMs = sanitizeNumber(
@@ -2130,7 +2253,8 @@ async function saveSettingsFromPanel(payload: {
     ["provider.topP", sanitizedTopP],
     ["provider.maxTokens", sanitizedMaxTokens],
     ["provider.reasoningEffort", payload.reasoningEffort],
-    ["autoExplain.enabled", payload.autoExplainEnabled]
+    ["autoExplain.enabled", payload.autoExplainEnabled],
+    ["preprocess.includeAllCandidates", payload.preprocessIncludeAllCandidates]
   ];
 
   for (const [key, value] of updates) {
