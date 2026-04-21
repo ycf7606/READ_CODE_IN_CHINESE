@@ -4,6 +4,7 @@ import {
   ExplanationGranularity,
   ExplanationResponse,
   GlossaryEntry,
+  PreprocessCandidateState,
   PreprocessedSymbolEntry,
   PreprocessProgress,
   ReasoningEffort,
@@ -16,6 +17,7 @@ export interface ExplanationPanelState {
   workspaceIndex?: WorkspaceIndex;
   glossaryEntries: GlossaryEntry[];
   wordbookEntries: PreprocessedSymbolEntry[];
+  wordbookCandidates: PreprocessCandidateState[];
   statusMessage?: string;
   isWatchingSelection?: boolean;
   currentFile?: string;
@@ -31,14 +33,16 @@ type PanelMessage =
   | { type: "ready" }
   | { type: "askQuestion"; question: string }
   | { type: "openSettings" }
-  | { type: "setReasoningEffort"; reasoningEffort: ReasoningEffort };
+  | { type: "setReasoningEffort"; reasoningEffort: ReasoningEffort }
+  | { type: "retryFailedPreprocess" };
 
 export class ExplanationPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private state: ExplanationPanelState = {
     chatHistory: [],
     glossaryEntries: [],
-    wordbookEntries: []
+    wordbookEntries: [],
+    wordbookCandidates: []
   };
 
   constructor(
@@ -306,6 +310,114 @@ export class ExplanationPanel implements vscode.Disposable {
         font-size: 11px;
       }
 
+      .secondary {
+        border: 1px solid var(--vscode-button-border, transparent);
+        border-radius: 8px;
+        padding: 6px 10px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        cursor: pointer;
+      }
+
+      .secondary:hover {
+        background: var(--vscode-button-secondaryHoverBackground);
+      }
+
+      .secondary:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      .wordbook-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .wordbook-group {
+        display: grid;
+        gap: 8px;
+      }
+
+      .wordbook-group-title {
+        color: var(--vscode-descriptionForeground);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      .wordbook-row {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 78%, transparent);
+        background: color-mix(in srgb, var(--vscode-editorWidget-background) 74%, transparent);
+      }
+
+      .wordbook-row-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .wordbook-row-title {
+        font-weight: 600;
+        font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
+      }
+
+      .wordbook-row-body {
+        display: grid;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .wordbook-row-meta {
+        color: var(--vscode-descriptionForeground);
+        font-size: 11px;
+      }
+
+      .wordbook-row-summary {
+        font-size: 12px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+
+      .status-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 72px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        border: 1px solid transparent;
+      }
+
+      .status-pending {
+        color: var(--vscode-descriptionForeground);
+        background: color-mix(in srgb, var(--vscode-editorInfo-foreground) 10%, transparent);
+        border-color: color-mix(in srgb, var(--vscode-editorInfo-foreground) 18%, transparent);
+      }
+
+      .status-processing {
+        color: var(--vscode-textLink-foreground);
+        background: color-mix(in srgb, var(--vscode-textLink-foreground) 12%, transparent);
+        border-color: color-mix(in srgb, var(--vscode-textLink-foreground) 20%, transparent);
+      }
+
+      .status-succeeded {
+        color: var(--vscode-testing-iconPassed);
+        background: color-mix(in srgb, var(--vscode-testing-iconPassed) 12%, transparent);
+        border-color: color-mix(in srgb, var(--vscode-testing-iconPassed) 24%, transparent);
+      }
+
+      .status-failed {
+        color: var(--vscode-testing-iconFailed);
+        background: color-mix(in srgb, var(--vscode-testing-iconFailed) 12%, transparent);
+        border-color: color-mix(in srgb, var(--vscode-testing-iconFailed) 24%, transparent);
+      }
+
       .wordbook-tree {
         display: grid;
         gap: 4px;
@@ -524,14 +636,17 @@ export class ExplanationPanel implements vscode.Disposable {
 
           <div id="wordbookPage" class="page">
             <div>
-              <div class="label">Preprocessing</div>
+              <div class="wordbook-toolbar">
+                <div class="label">Preprocessing</div>
+                <button class="secondary" id="retryFailedButton" type="button" disabled>Retry Failed</button>
+              </div>
               <div class="progress-wrap">
                 <div id="wordbookPreprocessMeta" class="meta"></div>
                 <div class="progress-bar"><div id="wordbookPreprocessFill" class="progress-fill"></div></div>
               </div>
             </div>
             <div>
-              <div class="label">File Wordbook</div>
+              <div class="label">My Wordbook</div>
               <div id="wordbook" class="list"></div>
             </div>
           </div>
@@ -577,6 +692,7 @@ export class ExplanationPanel implements vscode.Disposable {
       const preprocessFill = document.getElementById("preprocessFill");
       const wordbookPreprocessMeta = document.getElementById("wordbookPreprocessMeta");
       const wordbookPreprocessFill = document.getElementById("wordbookPreprocessFill");
+      const retryFailedButton = document.getElementById("retryFailedButton");
       const wordbook = document.getElementById("wordbook");
       const sections = document.getElementById("sections");
       const glossary = document.getElementById("glossary");
@@ -690,143 +806,163 @@ export class ExplanationPanel implements vscode.Disposable {
         detectedType.appendChild(chip);
       }
 
-      function buildWordbookTree(entries) {
-        const root = {
-          groups: [],
-          terms: [],
-          groupMap: new Map()
-        };
-        const sortedEntries = [...entries].sort((left, right) => {
+      function buildWordbookGroups(candidateStates) {
+        const sortedStates = [...candidateStates].sort((left, right) => {
+          const leftScope = Array.isArray(left.scopePath) && left.scopePath.length
+            ? left.scopePath.join(" / ")
+            : "Module Scope";
+          const rightScope = Array.isArray(right.scopePath) && right.scopePath.length
+            ? right.scopePath.join(" / ")
+            : "Module Scope";
+
           return (
+            leftScope.localeCompare(rightScope) ||
             (left.sourceLine || Number.MAX_SAFE_INTEGER) -
               (right.sourceLine || Number.MAX_SAFE_INTEGER) ||
             left.term.localeCompare(right.term)
           );
         });
+        const groups = new Map();
 
-        for (const entry of sortedEntries) {
-          const path =
-            Array.isArray(entry.scopePath) && entry.scopePath.length
-              ? entry.scopePath
-              : ["Module Scope"];
-          let current = root;
-
-          for (const segment of path) {
-            let group = current.groupMap.get(segment);
-
-            if (!group) {
-              group = {
-                label: segment,
-                groups: [],
-                terms: [],
-                groupMap: new Map()
-              };
-              current.groupMap.set(segment, group);
-              current.groups.push(group);
-            }
-
-            current = group;
-          }
-
-          current.terms.push(entry);
+        for (const candidateState of sortedStates) {
+          const groupLabel =
+            Array.isArray(candidateState.scopePath) && candidateState.scopePath.length
+              ? candidateState.scopePath.join(" / ")
+              : "Module Scope";
+          const groupEntries = groups.get(groupLabel) || [];
+          groupEntries.push(candidateState);
+          groups.set(groupLabel, groupEntries);
         }
 
-        return root;
+        return Array.from(groups.entries());
       }
 
-      function renderWordbookEntry(entry) {
-        const details = document.createElement("details");
-        details.className = "tree-term";
+      function createStatusChip(status) {
+        const chip = document.createElement("span");
+        const labelMap = {
+          pending: "待处理",
+          processing: "处理中",
+          succeeded: "处理成功",
+          failed: "处理失败"
+        };
+        chip.className = "status-chip status-" + status;
+        chip.textContent = labelMap[status] || status;
+        return chip;
+      }
 
-        const summary = document.createElement("summary");
-        const label = document.createElement("span");
-        label.className = "tree-label";
-        label.textContent = entry.term;
-        summary.appendChild(label);
-        details.appendChild(summary);
+      function renderWordbookCandidate(candidateState) {
+        const row = document.createElement("div");
+        row.className = "wordbook-row";
+
+        const head = document.createElement("div");
+        head.className = "wordbook-row-head";
+
+        const title = document.createElement("div");
+        title.className = "wordbook-row-title";
+        title.textContent = candidateState.term;
+        head.appendChild(title);
+        head.appendChild(createStatusChip(candidateState.status));
+        row.appendChild(head);
 
         const body = document.createElement("div");
-        body.className = "tree-term-body";
+        body.className = "wordbook-row-body";
 
         const meta = document.createElement("div");
-        meta.className = "tree-term-meta";
-        meta.textContent = entry.category + " | line " + entry.sourceLine;
+        meta.className = "wordbook-row-meta";
+        meta.textContent =
+          candidateState.category +
+          " | line " +
+          candidateState.sourceLine +
+          (typeof candidateState.references === "number"
+            ? " | refs " + candidateState.references
+            : "");
         body.appendChild(meta);
 
-        const description = document.createElement("div");
-        description.className = "tree-term-summary";
-        description.textContent = entry.summary;
-        body.appendChild(description);
+        const content = document.createElement("div");
+        content.className = "wordbook-row-summary";
+        content.textContent =
+          candidateState.status === "succeeded"
+            ? candidateState.summary || "处理成功，但未返回摘要。"
+            : candidateState.status === "failed"
+              ? candidateState.error || "处理失败，可点击 Retry Failed 再试。"
+              : candidateState.status === "processing"
+                ? "正在预处理这个词。"
+                : "已选入单词本，等待预处理。";
+        body.appendChild(content);
 
-        details.appendChild(body);
-        return details;
+        row.appendChild(body);
+        return row;
       }
 
-      function renderWordbookGroup(group) {
-        const details = document.createElement("details");
-        details.className = "tree-group";
-
-        const summary = document.createElement("summary");
-        const label = document.createElement("span");
-        label.className = "tree-label";
-        label.textContent = group.label;
-        summary.appendChild(label);
-        details.appendChild(summary);
-
-        const children = document.createElement("div");
-        children.className = "tree-children";
-
-        for (const childGroup of group.groups) {
-          children.appendChild(renderWordbookGroup(childGroup));
-        }
-
-        for (const entry of group.terms) {
-          children.appendChild(renderWordbookEntry(entry));
-        }
-
-        details.appendChild(children);
-        return details;
-      }
-
-      function renderWordbook(entries) {
+      function renderWordbook(candidateStates) {
         wordbook.innerHTML = "";
 
-        if (!entries.length) {
+        if (!candidateStates.length) {
           renderEmpty(wordbook, "Run preprocessing to build the current file wordbook.");
           return;
         }
 
-        const tree = buildWordbookTree(entries);
-        const container = document.createElement("div");
-        container.className = "wordbook-tree";
+        for (const [groupLabel, groupEntries] of buildWordbookGroups(candidateStates)) {
+          const group = document.createElement("div");
+          group.className = "wordbook-group";
 
-        for (const group of tree.groups) {
-          container.appendChild(renderWordbookGroup(group));
+          const title = document.createElement("div");
+          title.className = "wordbook-group-title";
+          title.textContent = groupLabel;
+          group.appendChild(title);
+
+          for (const candidateState of groupEntries) {
+            group.appendChild(renderWordbookCandidate(candidateState));
+          }
+
+          wordbook.appendChild(group);
         }
-
-        wordbook.appendChild(container);
       }
 
       function renderPreprocess(progress) {
         const lines = [];
         let percentage = 0;
+        let failedCount = 0;
 
         if (progress) {
           const candidatePoolCount = progress.candidatePoolCount || progress.totalCandidates;
-          const selectingStep = (progress.currentStep || "").toLowerCase().includes("select");
-          const preparingStep = (progress.currentStep || "").toLowerCase().includes("prepar");
+          const candidateStates = Array.isArray(progress.candidateStates)
+            ? progress.candidateStates
+            : [];
+          const successfulCount =
+            typeof progress.successfulCandidates === "number"
+              ? progress.successfulCandidates
+              : candidateStates.filter((candidateState) => candidateState.status === "succeeded").length;
+          failedCount =
+            typeof progress.failedCandidates === "number"
+              ? progress.failedCandidates
+              : candidateStates.filter((candidateState) => candidateState.status === "failed").length;
+          const processingCount = candidateStates.filter(
+            (candidateState) => candidateState.status === "processing"
+          ).length;
+          const pendingCount = candidateStates.filter(
+            (candidateState) => candidateState.status === "pending"
+          ).length;
 
-          if (selectingStep) {
+          lines.push("Selected terms: " + progress.totalCandidates);
+          if (candidatePoolCount !== progress.totalCandidates) {
             lines.push("Candidate pool: " + candidatePoolCount);
-            lines.push("Selected target: " + progress.totalCandidates);
+          }
+          if (candidateStates.length) {
+            lines.push(
+              "Status: success " +
+                successfulCount +
+                " | failed " +
+                failedCount +
+                " | pending " +
+                pendingCount +
+                (processingCount > 0 ? " | processing " + processingCount : "")
+            );
           } else {
             lines.push("Cached entries: " + progress.processedCandidates + " / " + progress.totalCandidates);
-            if (candidatePoolCount !== progress.totalCandidates) {
-              lines.push("Selected from: " + candidatePoolCount + " candidates");
-            }
           }
 
-          if (!selectingStep && !preparingStep && progress.batchCount > 0) {
+          if (progress.batchCount > 0) {
             lines.push(
               "Batches: " +
                 (progress.processedBatches || 0) +
@@ -861,8 +997,32 @@ export class ExplanationPanel implements vscode.Disposable {
             lines.push(progress.message);
           }
 
-          if (progress.totalSteps > 0) {
-            percentage = Math.max(0, Math.min(100, Math.round((progress.completedSteps / progress.totalSteps) * 100)));
+          const stepPercentage =
+            progress.totalSteps > 0
+              ? Math.max(0, Math.min(100, Math.round((progress.completedSteps / progress.totalSteps) * 100)))
+              : 0;
+          const termPercentage =
+            progress.totalCandidates > 0
+              ? Math.max(
+                  0,
+                  Math.min(
+                    100,
+                    Math.round(
+                      ((successfulCount + failedCount) / Math.max(1, progress.totalCandidates)) * 100
+                    )
+                  )
+                )
+              : 0;
+
+          percentage = Math.max(stepPercentage, termPercentage);
+
+          if (progress.status === "failed" && progress.totalCandidates > 0) {
+            percentage = Math.max(
+              percentage,
+              Math.round(
+                ((successfulCount + failedCount) / Math.max(1, progress.totalCandidates)) * 100
+              )
+            );
           }
 
           if (progress.status === "running" && percentage === 0) {
@@ -876,6 +1036,9 @@ export class ExplanationPanel implements vscode.Disposable {
         preprocessFill.style.width = percentage + "%";
         wordbookPreprocessMeta.innerHTML = preprocessMeta.innerHTML;
         wordbookPreprocessFill.style.width = preprocessFill.style.width;
+        retryFailedButton.disabled = failedCount === 0;
+        retryFailedButton.textContent =
+          failedCount > 0 ? "Retry Failed (" + failedCount + ")" : "Retry Failed";
       }
 
       window.addEventListener("message", (event) => {
@@ -911,7 +1074,11 @@ export class ExplanationPanel implements vscode.Disposable {
         renderDetectedType(payload.currentGranularity);
         renderPreprocess(payload.preprocessProgress);
 
-        renderWordbook(payload.wordbookEntries || []);
+        renderWordbook(
+          (payload.wordbookCandidates && payload.wordbookCandidates.length
+            ? payload.wordbookCandidates
+            : payload.preprocessProgress?.candidateStates) || []
+        );
 
         sections.innerHTML = "";
         if (explanation?.sections?.length) {
@@ -971,6 +1138,14 @@ export class ExplanationPanel implements vscode.Disposable {
 
       wordbookTabButton.addEventListener("click", () => {
         setActivePage("wordbook");
+      });
+
+      retryFailedButton.addEventListener("click", () => {
+        if (retryFailedButton.disabled) {
+          return;
+        }
+
+        vscode.postMessage({ type: "retryFailedPreprocess" });
       });
 
       reasoningEffortSelect.addEventListener("change", () => {

@@ -45,6 +45,15 @@ const COMMON_KEYWORDS = new Set([
   "in",
   "of"
 ]);
+const METHOD_NAME_EXCLUSIONS = new Set([
+  "if",
+  "for",
+  "while",
+  "switch",
+  "catch",
+  "return",
+  "constructor"
+]);
 
 const LABEL_CONTEXT_PATTERN =
   /\b(?:class|label|categor(?:y|ies)|target|name|type|tag)[A-Za-z_]*\b/i;
@@ -184,6 +193,71 @@ function addMemberFunctionEntries(
   }
 }
 
+function addAssignedFunctionEntries(
+  map: Map<string, GlossaryEntry>,
+  line: string,
+  lineNumber: number
+): void {
+  for (const match of line.matchAll(
+    /\b(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s+)?function\b/g
+  )) {
+    addEntry(map, match[1], "function", lineNumber);
+  }
+
+  for (const match of line.matchAll(
+    /\b(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>/g
+  )) {
+    addEntry(map, match[1], "function", lineNumber);
+  }
+}
+
+function addObjectFunctionPropertyEntries(
+  map: Map<string, GlossaryEntry>,
+  line: string,
+  lineNumber: number
+): void {
+  for (const match of line.matchAll(
+    /\b([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?:async\s+)?function\b/g
+  )) {
+    addEntry(map, match[1], "function", lineNumber);
+  }
+
+  for (const match of line.matchAll(
+    /\b([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>/g
+  )) {
+    addEntry(map, match[1], "function", lineNumber);
+  }
+}
+
+function addMethodDefinitionEntries(
+  map: Map<string, GlossaryEntry>,
+  line: string,
+  lineNumber: number
+): void {
+  const trimmedLine = line.trim();
+
+  if (!trimmedLine || trimmedLine.startsWith("//") || trimmedLine.startsWith("*")) {
+    return;
+  }
+
+  const methodMatch =
+    /^(?:(?:export|public|private|protected|static|async|override|get|set|readonly)\s+)*([A-Za-z_$][A-Za-z0-9_$]*)\s*\([^;=]*\)\s*\{/.exec(
+      trimmedLine
+    );
+
+  if (!methodMatch) {
+    return;
+  }
+
+  const methodName = methodMatch[1];
+
+  if (METHOD_NAME_EXCLUSIONS.has(methodName)) {
+    return;
+  }
+
+  addEntry(map, methodName, "function", lineNumber);
+}
+
 export function extractGlossaryEntries(
   sourceCode: string,
   languageId: string,
@@ -207,6 +281,9 @@ export function extractGlossaryEntries(
       addEntry(glossaryMap, match[1], "function", lineNumber);
     }
 
+    addAssignedFunctionEntries(glossaryMap, line, lineNumber);
+    addObjectFunctionPropertyEntries(glossaryMap, line, lineNumber);
+    addMethodDefinitionEntries(glossaryMap, line, lineNumber);
     addMemberFunctionEntries(glossaryMap, line, lineNumber);
 
     for (const match of line.matchAll(

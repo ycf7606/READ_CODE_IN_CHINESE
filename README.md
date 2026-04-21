@@ -10,12 +10,13 @@ VS Code extension for reading source code in concise Chinese with:
 
 ## Version
 
-Current release baseline: `v0.1.1`
+Current release baseline: `v0.1.2`
 
 Remote wordbook preprocessing is now strict by default:
 
 - all file-local preprocess candidates are sent to the remote provider
-- every preprocess chunk must come back with a complete result set
+- the wordbook first lists selected candidates, then tracks each term as pending, processing, succeeded, or failed
+- failed wordbook terms can be retried without rebuilding successful items
 - the UI shows whether remote inference was actually verified
 - fallback endpoints can be retried automatically when the primary endpoint fails
 
@@ -92,9 +93,12 @@ The wordbook cache is stored under:
 Behavior:
 
 - the active file is scanned for user-defined variables, functions, classes, types, and label-like strings
+- custom function names from arrow functions, function expressions, object methods, and class methods are included
 - preprocessing uses full-file context
 - default mode preprocesses all file-local candidates
 - setting `readCodeInChinese.preprocess.includeAllCandidates = false` switches back to audience-filtered selection
+- incomplete remote batches are marked as failed so they can be retried from the wordbook page
+- cache metadata records selection mode, selection source, inference source, remote-verification state, and per-term statuses
 - incomplete remote batches fail immediately instead of writing partial “successful” cache entries
 - cache metadata records selection mode, selection source, inference source, and remote-verification state
 

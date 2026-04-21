@@ -33,15 +33,18 @@ Implemented in [symbolPreprocessBuilder.ts](/D:/project/代码翻译/READ_CODE_I
 Current default behavior:
 
 - build the raw candidate pool from the active file glossary
+- include custom arrow functions, function expressions, object methods, and class methods in that pool
 - preprocess all file-local candidates unless `preprocess.includeAllCandidates = false`
+- expose the selected wordbook terms before chunk preprocessing starts
 - send full-file context to the remote provider in chunks
-- reject incomplete remote chunk responses
-- persist only real generated entries
+- persist per-term statuses so failed symbols can be retried later
+- keep successful entries even when some chunks fail
 - record cache metadata:
   - `selectionMode`
   - `selectionSource`
   - `inferenceSource`
   - `verifiedRemoteInference`
+  - `candidateStates`
 
 ## Provider Model
 

@@ -1,4 +1,7 @@
-import { PreprocessedSymbolEntry } from "../contracts";
+interface WordbookScopedItem {
+  sourceLine: number;
+  scopePath?: string[];
+}
 
 type ScopeKind = "class" | "function";
 
@@ -28,11 +31,11 @@ const METHOD_NAME_EXCLUSIONS = new Set([
   "constructor"
 ]);
 
-export function attachWordbookScopePaths(
-  entries: PreprocessedSymbolEntry[],
+export function attachWordbookScopePaths<T extends WordbookScopedItem>(
+  entries: T[],
   sourceCode: string,
   languageId: string
-): PreprocessedSymbolEntry[] {
+): T[] {
   if (!entries.length || !sourceCode.trim()) {
     return entries;
   }

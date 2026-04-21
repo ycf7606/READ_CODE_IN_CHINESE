@@ -44,6 +44,7 @@ export type PreprocessedSymbolCategory =
   | "class"
   | "type"
   | "label";
+export type PreprocessCandidateStatus = "pending" | "processing" | "succeeded" | "failed";
 export type PreprocessStatus =
   | "idle"
   | "running"
@@ -231,12 +232,26 @@ export interface PreprocessedSymbolEntry {
   scopePath?: string[];
 }
 
+export interface PreprocessCandidateState {
+  term: string;
+  normalizedTerm: string;
+  category: PreprocessedSymbolCategory;
+  sourceLine: number;
+  references: number;
+  status: PreprocessCandidateStatus;
+  summary?: string;
+  error?: string;
+  generatedAt?: string;
+  scopePath?: string[];
+}
+
 export interface PreprocessedSymbolCacheFile {
   languageId: string;
   relativeFilePath: string;
   sourceHash: string;
   generatedAt: string;
   entries: PreprocessedSymbolEntry[];
+  candidateStates?: PreprocessCandidateState[];
   candidatePoolCount?: number;
   selectedCandidateCount?: number;
   selectionMode?: PreprocessSelectionMode;
@@ -328,4 +343,7 @@ export interface PreprocessProgress {
   selectionSource?: string;
   providerSource?: string;
   verifiedRemoteInference?: boolean;
+  candidateStates?: PreprocessCandidateState[];
+  successfulCandidates?: number;
+  failedCandidates?: number;
 }

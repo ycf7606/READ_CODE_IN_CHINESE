@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 - 2026-04-21
+
+- expanded wordbook extraction so custom arrow functions, function expressions, object methods, and class methods can enter the file wordbook
+- changed wordbook preprocessing into an explicit multi-step flow: candidate selection first, then per-term preprocessing states
+- persisted per-term wordbook statuses so the panel can restore pending, success, and failed items after refresh
+- added retry support for failed wordbook terms without discarding already successful cache entries
+- simplified the wordbook page around the wordbook list and preprocess progress only
+- added regression coverage for custom function extraction, per-term status reporting, and retry-after-failure behavior
+
 ## 0.1.1 - 2026-04-21
 
 - saved the cleaned runnable repository as the `v0.1.1` baseline

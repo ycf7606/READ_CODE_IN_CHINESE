@@ -18,6 +18,7 @@ import {
   ExplanationGranularity,
   GlossaryCacheFile,
   GlossaryEntry,
+  PreprocessCandidateState,
   PromptProfileRequest,
   PromptProfileResponse,
   PreprocessedSymbolEntry,
@@ -49,6 +50,7 @@ interface SessionState {
   workspaceIndex?: WorkspaceIndex;
   glossaryEntries: GlossaryEntry[];
   wordbookEntries: PreprocessedSymbolEntry[];
+  wordbookCandidates: PreprocessCandidateState[];
   wordbookRelativeFilePath?: string;
   wordbookSourceHash?: string;
   currentGranularity?: ExplanationGranularity;
@@ -79,7 +81,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const sessionState: SessionState = {
     chatHistory: [],
     glossaryEntries: [],
-    wordbookEntries: []
+    wordbookEntries: [],
+    wordbookCandidates: []
   };
   let autoExplainTimeout: NodeJS.Timeout | undefined;
   let preprocessTimeout: NodeJS.Timeout | undefined;
@@ -107,6 +110,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (message.type === "setReasoningEffort") {
       await persistConfigurationValue("provider.reasoningEffort", message.reasoningEffort);
+      return;
+    }
+
+    if (message.type === "retryFailedPreprocess") {
+      await runPreprocessForActiveEditor(true);
       return;
     }
 
@@ -686,6 +694,7 @@ export function activate(context: vscode.ExtensionContext): void {
         chatHistory: sessionState.chatHistory,
         glossaryEntries: glossaryEntries.length > 0 ? glossaryEntries : response.glossaryHints,
         wordbookEntries: getVisibleWordbookEntries(editor),
+        wordbookCandidates: getVisibleWordbookCandidates(editor),
         workspaceIndex: sessionState.workspaceIndex,
         isWatchingSelection: panel.isWatchingSelection(),
         currentFile: relativeFilePath,
@@ -842,6 +851,7 @@ export function activate(context: vscode.ExtensionContext): void {
           chatHistory: [],
           glossaryEntries,
           wordbookEntries: getVisibleWordbookEntries(editor),
+          wordbookCandidates: getVisibleWordbookCandidates(editor),
           isWatchingSelection: panel.isWatchingSelection(),
           currentFile: relativeFilePath,
           currentSelectionLabel: "Entire file",
@@ -895,6 +905,7 @@ export function activate(context: vscode.ExtensionContext): void {
         panel.setState({
           workspaceIndex: index,
           wordbookEntries: getVisibleWordbookEntries(editor),
+          wordbookCandidates: getVisibleWordbookCandidates(editor),
           isWatchingSelection: panel.isWatchingSelection(),
           currentFile: projectContext.relativeFilePath,
           currentGranularity: "workspace",
@@ -934,6 +945,7 @@ export function activate(context: vscode.ExtensionContext): void {
       panel.setState({
         glossaryEntries: [],
         wordbookEntries: [],
+        wordbookCandidates: [],
         currentFile: undefined,
         currentSelectionLabel: undefined,
         isWatchingSelection: panel.isWatchingSelection()
@@ -948,6 +960,7 @@ export function activate(context: vscode.ExtensionContext): void {
       panel.setState({
         glossaryEntries: [],
         wordbookEntries: [],
+        wordbookCandidates: [],
         currentFile: path.basename(editor.document.uri.fsPath),
         currentSelectionLabel: formatSelectionLabel(editor.selection),
         isWatchingSelection: panel.isWatchingSelection()
@@ -1288,11 +1301,13 @@ export function activate(context: vscode.ExtensionContext): void {
   function setWordbookState(
     relativeFilePath: string | undefined,
     sourceHash: string | undefined,
-    entries: PreprocessedSymbolEntry[]
+    entries: PreprocessedSymbolEntry[],
+    candidateStates: PreprocessCandidateState[]
   ): void {
     sessionState.wordbookRelativeFilePath = relativeFilePath;
     sessionState.wordbookSourceHash = sourceHash;
     sessionState.wordbookEntries = sanitizeWordbookEntries(entries);
+    sessionState.wordbookCandidates = sanitizeWordbookCandidateStates(candidateStates);
   }
 
   function sanitizeWordbookEntries(
@@ -1304,6 +1319,38 @@ export function activate(context: vscode.ExtensionContext): void {
         !/作用需要结合附近代码继续确认/.test(entry.summary)
       );
     });
+  }
+
+  function sanitizeWordbookCandidateStates(
+    candidateStates: PreprocessCandidateState[]
+  ): PreprocessCandidateState[] {
+    return candidateStates.map((candidateState) => {
+      if (
+        candidateState.status === "succeeded" &&
+        hasInvalidWordbookSummary(candidateState.summary)
+      ) {
+        return {
+          ...candidateState,
+          status: "pending",
+          summary: undefined,
+          generatedAt: undefined,
+          error: undefined
+        };
+      }
+
+      return candidateState;
+    });
+  }
+
+  function hasInvalidWordbookSummary(summary: string | undefined): boolean {
+    if (!summary) {
+      return true;
+    }
+
+    return (
+      /作用需要结合附近代码继续确认/.test(summary) ||
+      /浣滅敤闇€瑕佺粨鍚堥檮杩戜唬鐮佺户缁‘璁?/.test(summary)
+    );
   }
 
   function getVisibleWordbookEntries(editor: vscode.TextEditor | undefined): PreprocessedSymbolEntry[] {
@@ -1328,6 +1375,93 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   }
 
+  function getVisibleWordbookCandidates(
+    editor: vscode.TextEditor | undefined
+  ): PreprocessCandidateState[] {
+    if (!editor) {
+      return [];
+    }
+
+    const relativeFilePath = getRelativeFilePath(editor);
+
+    if (
+      !relativeFilePath ||
+      relativeFilePath !== sessionState.wordbookRelativeFilePath ||
+      sessionState.wordbookSourceHash !== createContentHash(editor.document.getText())
+    ) {
+      return [];
+    }
+
+    return attachWordbookScopePaths(
+      sessionState.wordbookCandidates,
+      editor.document.getText(),
+      editor.document.languageId
+    );
+  }
+
+  function buildWordbookCandidateStatesFromCache(
+    cacheFile: Awaited<ReturnType<PreprocessStore["read"]>>,
+    entries: PreprocessedSymbolEntry[]
+  ): PreprocessCandidateState[] {
+    if (!cacheFile) {
+      return [];
+    }
+
+    if (cacheFile.candidateStates?.length) {
+      return sanitizeWordbookCandidateStates(cacheFile.candidateStates);
+    }
+
+    return entries.map((entry) => ({
+      term: entry.term,
+      normalizedTerm: entry.normalizedTerm,
+      category: entry.category,
+      sourceLine: entry.sourceLine,
+      references: 0,
+      status: "succeeded",
+      summary: entry.summary,
+      generatedAt: entry.generatedAt
+    }));
+  }
+
+  function createPreprocessProgressFromCache(
+    cacheFile: NonNullable<Awaited<ReturnType<PreprocessStore["read"]>>>,
+    candidateStates: PreprocessCandidateState[]
+  ): PreprocessProgress {
+    const successfulCandidates = candidateStates.filter(
+      (candidateState) => candidateState.status === "succeeded"
+    ).length;
+    const failedCandidates = candidateStates.filter(
+      (candidateState) => candidateState.status === "failed"
+    ).length;
+
+    return {
+      status: failedCandidates > 0 ? "failed" : "completed",
+      totalCandidates: cacheFile.selectedCandidateCount ?? candidateStates.length,
+      processedCandidates: successfulCandidates,
+      totalSteps: 5,
+      completedSteps: 5,
+      batchCount: 0,
+      processedBatches: 0,
+      candidatePoolCount: cacheFile.candidatePoolCount ?? candidateStates.length,
+      relativeFilePath: cacheFile.relativeFilePath,
+      currentStep: failedCandidates > 0 ? "Completed with failures" : "Completed",
+      message:
+        failedCandidates > 0
+          ? `Loaded cached wordbook. ${failedCandidates} terms still need retry.`
+          : `Loaded ${successfulCandidates} cached wordbook entries.`,
+      sourceHash: cacheFile.sourceHash,
+      startedAt: cacheFile.generatedAt,
+      completedAt: cacheFile.generatedAt,
+      selectionMode: cacheFile.selectionMode,
+      selectionSource: cacheFile.selectionSource,
+      providerSource: cacheFile.inferenceSource,
+      verifiedRemoteInference: cacheFile.verifiedRemoteInference ?? false,
+      candidateStates,
+      successfulCandidates,
+      failedCandidates
+    };
+  }
+
   async function refreshWordbookForActiveEditor(): Promise<void> {
     await refreshWordbookForEditor(getPreferredSourceEditor());
   }
@@ -1336,9 +1470,10 @@ export function activate(context: vscode.ExtensionContext): void {
     editor: vscode.TextEditor | undefined
   ): Promise<void> {
     if (!editor) {
-      setWordbookState(undefined, undefined, []);
+      setWordbookState(undefined, undefined, [], []);
       panel.setState({
-        wordbookEntries: []
+        wordbookEntries: [],
+        wordbookCandidates: []
       });
       return;
     }
@@ -1346,9 +1481,10 @@ export function activate(context: vscode.ExtensionContext): void {
     const projectContext = getProjectContext(editor.document, logger);
 
     if (!projectContext) {
-      setWordbookState(undefined, undefined, []);
+      setWordbookState(undefined, undefined, [], []);
       panel.setState({
-        wordbookEntries: []
+        wordbookEntries: [],
+        wordbookCandidates: []
       });
       return;
     }
@@ -1359,22 +1495,51 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (cacheFile && cacheFile.sourceHash === sourceHash) {
       const sanitizedEntries = sanitizeWordbookEntries(cacheFile.entries);
+      const sanitizedCandidateStates = buildWordbookCandidateStatesFromCache(
+        cacheFile,
+        sanitizedEntries
+      );
+      const shouldRewriteCache =
+        sanitizedEntries.length !== cacheFile.entries.length ||
+        JSON.stringify(cacheFile.candidateStates ?? []) !==
+          JSON.stringify(sanitizedCandidateStates);
 
-      if (sanitizedEntries.length !== cacheFile.entries.length) {
+      if (shouldRewriteCache) {
         await preprocessStore.write(projectContext.relativeFilePath, {
           ...cacheFile,
           generatedAt: new Date().toISOString(),
-          entries: sanitizedEntries
+          entries: sanitizedEntries,
+          candidateStates: sanitizedCandidateStates
         });
       }
 
-      setWordbookState(projectContext.relativeFilePath, cacheFile.sourceHash, sanitizedEntries);
+      setWordbookState(
+        projectContext.relativeFilePath,
+        cacheFile.sourceHash,
+        sanitizedEntries,
+        sanitizedCandidateStates
+      );
+      if (!activePreprocessTask) {
+        sessionState.preprocessProgress = createPreprocessProgressFromCache(
+          {
+            ...cacheFile,
+            entries: sanitizedEntries,
+            candidateStates: sanitizedCandidateStates
+          },
+          sanitizedCandidateStates
+        );
+      }
     } else {
-      setWordbookState(projectContext.relativeFilePath, sourceHash, []);
+      setWordbookState(projectContext.relativeFilePath, sourceHash, [], []);
+      if (!activePreprocessTask) {
+        sessionState.preprocessProgress = undefined;
+      }
     }
 
     panel.setState({
-      wordbookEntries: getVisibleWordbookEntries(editor)
+      wordbookEntries: getVisibleWordbookEntries(editor),
+      wordbookCandidates: getVisibleWordbookCandidates(editor),
+      preprocessProgress: getVisiblePreprocessProgress(sessionState.preprocessProgress, editor)
     });
   }
 
@@ -1389,6 +1554,7 @@ export function activate(context: vscode.ExtensionContext): void {
       currentSelectionLabel: sourceEditor ? formatSelectionLabel(sourceEditor.selection) : undefined,
       currentGranularity,
       wordbookEntries: getVisibleWordbookEntries(sourceEditor),
+      wordbookCandidates: getVisibleWordbookCandidates(sourceEditor),
       reasoningEffort: getSettings().providerReasoningEffort,
       preprocessProgress: getVisiblePreprocessProgress(sessionState.preprocessProgress, sourceEditor)
     });
@@ -1426,6 +1592,7 @@ export function activate(context: vscode.ExtensionContext): void {
         completedSteps: 0,
         batchCount: 0,
         relativeFilePath: projectContext.relativeFilePath,
+        sourceHash,
         currentStep: "Checking remote provider",
         message: remoteReadinessError,
         startedAt: new Date().toISOString(),
@@ -1438,7 +1605,8 @@ export function activate(context: vscode.ExtensionContext): void {
       };
       panel.setState({
         preprocessProgress: sessionState.preprocessProgress,
-        wordbookEntries: getVisibleWordbookEntries(editor)
+        wordbookEntries: getVisibleWordbookEntries(editor),
+        wordbookCandidates: getVisibleWordbookCandidates(editor)
       });
 
       if (showNotifications) {
@@ -1462,6 +1630,7 @@ export function activate(context: vscode.ExtensionContext): void {
         completedSteps: 0,
         batchCount: 0,
         relativeFilePath: projectContext.relativeFilePath,
+        sourceHash,
         currentStep: "Checking remote provider",
         message: providerError,
         startedAt: new Date().toISOString(),
@@ -1474,7 +1643,8 @@ export function activate(context: vscode.ExtensionContext): void {
       };
       panel.setState({
         preprocessProgress: sessionState.preprocessProgress,
-        wordbookEntries: getVisibleWordbookEntries(editor)
+        wordbookEntries: getVisibleWordbookEntries(editor),
+        wordbookCandidates: getVisibleWordbookCandidates(editor)
       });
 
       if (showNotifications) {
@@ -1491,7 +1661,7 @@ export function activate(context: vscode.ExtensionContext): void {
       sessionState.wordbookRelativeFilePath !== projectContext.relativeFilePath ||
       sessionState.wordbookSourceHash !== sourceHash
     ) {
-      setWordbookState(projectContext.relativeFilePath, sourceHash, []);
+      setWordbookState(projectContext.relativeFilePath, sourceHash, [], []);
     }
 
     if (showNotifications && !panel.isVisible()) {
@@ -1518,13 +1688,15 @@ export function activate(context: vscode.ExtensionContext): void {
         batchCount: 0,
         candidatePoolCount: candidatePool.length,
         relativeFilePath: projectContext.relativeFilePath,
+        sourceHash,
         currentStep: "Preparing candidate pool",
         message: `Prepared ${candidatePool.length} preprocessable symbols for this file.`,
         startedAt: new Date().toISOString()
       };
       panel.setState({
         preprocessProgress: sessionState.preprocessProgress,
-        wordbookEntries: getVisibleWordbookEntries(editor)
+        wordbookEntries: getVisibleWordbookEntries(editor),
+        wordbookCandidates: getVisibleWordbookCandidates(editor)
       });
 
       const result = await buildSymbolPreprocessCache({
@@ -1549,10 +1721,12 @@ export function activate(context: vscode.ExtensionContext): void {
           setWordbookState(
             projectContext.relativeFilePath,
             cacheFile.sourceHash,
-            cacheFile.entries
+            cacheFile.entries,
+            buildWordbookCandidateStatesFromCache(cacheFile, cacheFile.entries)
           );
           panel.setState({
-            wordbookEntries: getVisibleWordbookEntries(editor)
+            wordbookEntries: getVisibleWordbookEntries(editor),
+            wordbookCandidates: getVisibleWordbookCandidates(editor)
           });
         },
         onProgress: (progress) => {
@@ -1561,8 +1735,14 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           sessionState.preprocessProgress = progress;
+          if (progress.candidateStates) {
+            sessionState.wordbookCandidates = sanitizeWordbookCandidateStates(
+              progress.candidateStates
+            );
+          }
           panel.setState({
-            preprocessProgress: progress
+            preprocessProgress: progress,
+            wordbookCandidates: getVisibleWordbookCandidates(editor)
           });
         }
       });
@@ -1576,7 +1756,11 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       if (result) {
-        if (result.source !== "openai-compatible" || !result.verifiedRemoteInference) {
+        const successfulCandidateCount = result.candidateStates.filter(
+          (candidateState) => candidateState.status === "succeeded"
+        ).length;
+
+        if (!result.verifiedRemoteInference && successfulCandidateCount === 0) {
           throw new Error(
             "Preprocess finished without verified remote API inference."
           );
@@ -1584,6 +1768,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
         if (
           settings.preprocessIncludeAllCandidates &&
+          result.failedCandidateCount === 0 &&
           result.cacheFile.entries.length !== candidatePool.length
         ) {
           throw new Error(
@@ -1594,17 +1779,25 @@ export function activate(context: vscode.ExtensionContext): void {
         setWordbookState(
           projectContext.relativeFilePath,
           result.cacheFile.sourceHash,
-          result.cacheFile.entries
+          result.cacheFile.entries,
+          result.candidateStates
         );
         panel.setState({
-          wordbookEntries: getVisibleWordbookEntries(editor)
+          wordbookEntries: getVisibleWordbookEntries(editor),
+          wordbookCandidates: getVisibleWordbookCandidates(editor)
         });
       }
 
       if (result && showNotifications) {
-        await vscode.window.showInformationMessage(
-          `Read Code In Chinese: verified remote preprocessing for ${result.cacheFile.entries.length} symbols in ${projectContext.relativeFilePath}.`
-        );
+        if (result.failedCandidateCount > 0) {
+          await vscode.window.showWarningMessage(
+            `Read Code In Chinese: preprocessed ${result.cacheFile.entries.length} symbols in ${projectContext.relativeFilePath}, but ${result.failedCandidateCount} terms failed. Use Retry Failed in Wordbook.`
+          );
+        } else {
+          await vscode.window.showInformationMessage(
+            `Read Code In Chinese: verified remote preprocessing for ${result.cacheFile.entries.length} symbols in ${projectContext.relativeFilePath}.`
+          );
+        }
       }
     } catch (error) {
       if (isAbortLikeError(error)) {
@@ -1626,13 +1819,15 @@ export function activate(context: vscode.ExtensionContext): void {
           startedAt: new Date().toISOString()
         }),
         relativeFilePath: projectContext.relativeFilePath,
+        sourceHash,
         status: "failed",
         message: error instanceof Error ? error.message : String(error),
         completedAt: new Date().toISOString()
       };
       panel.setState({
         preprocessProgress: sessionState.preprocessProgress,
-        wordbookEntries: getVisibleWordbookEntries(editor)
+        wordbookEntries: getVisibleWordbookEntries(editor),
+        wordbookCandidates: getVisibleWordbookCandidates(editor)
       });
 
       if (showNotifications) {
@@ -2187,7 +2382,12 @@ function getVisiblePreprocessProgress(
     return undefined;
   }
 
-  return progress.relativeFilePath === getRelativeFilePath(editor) ? progress : undefined;
+  const editorSourceHash = createContentHash(editor.document.getText());
+
+  return progress.relativeFilePath === getRelativeFilePath(editor) &&
+    progress.sourceHash === editorSourceHash
+    ? progress
+    : undefined;
 }
 
 async function persistConfigurationValue(key: string, value: unknown): Promise<void> {

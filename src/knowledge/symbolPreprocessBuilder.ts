@@ -3,6 +3,7 @@
   ExplanationResponse,
   ExtensionSettings,
   GlossaryEntry,
+  PreprocessCandidateState,
   PreprocessSelectionMode,
   PreprocessCandidateSelectionRequest,
   PreprocessedSymbolCacheFile,
@@ -47,6 +48,8 @@ export interface BuildSymbolPreprocessOptions {
 export interface SymbolPreprocessResult {
   cacheFile: PreprocessedSymbolCacheFile;
   candidates: PreprocessedSymbolCandidate[];
+  candidateStates: PreprocessCandidateState[];
+  failedCandidateCount: number;
   source: string;
   selectionMode: PreprocessSelectionMode;
   selectionSource: string;
@@ -113,19 +116,33 @@ export async function buildSymbolPreprocessCache(
     : await selectCandidatesForPreprocess(options, candidatePool, sourceHash);
   const selectedCandidates = selection.candidates;
   const existingCache = await preprocessStore.read(options.relativeFilePath);
+  const canReuseExistingCache = Boolean(
+    existingCache &&
+      existingCache.sourceHash === sourceHash &&
+      existingCache.verifiedRemoteInference === true
+  );
   const selectedCandidateTerms = new Set(
     selectedCandidates.map((candidate) => candidate.normalizedTerm)
   );
-  const cachedEntries =
-    existingCache && existingCache.sourceHash === sourceHash
-      ? existingCache.entries.filter(
+  const cachedEntries = canReuseExistingCache
+    ? existingCache!.entries.filter(
           (entry) =>
             selectedCandidateTerms.has(entry.normalizedTerm) &&
             !isPlaceholderPreprocessEntry(entry)
         )
-      : [];
+    : [];
+  const candidateStates = buildCandidateStates(
+    selectedCandidates,
+    cachedEntries,
+    canReuseExistingCache ? existingCache?.candidateStates : undefined
+  );
+  const candidateStateMap = new Map(
+    candidateStates.map((candidateState) => [candidateState.normalizedTerm, candidateState])
+  );
+  const getCurrentCandidateStates = (): PreprocessCandidateState[] =>
+    sortCandidateStates(Array.from(candidateStateMap.values()), selectedCandidates);
   const missingCandidates = selectedCandidates.filter(
-    (candidate) => !cachedEntries.some((entry) => entry.normalizedTerm === candidate.normalizedTerm)
+    (candidate) => candidateStateMap.get(candidate.normalizedTerm)?.status !== "succeeded"
   );
 
   if (selectedCandidates.length === 0) {
@@ -135,6 +152,7 @@ export async function buildSymbolPreprocessCache(
       sourceHash,
       generatedAt: new Date().toISOString(),
       entries: [],
+      candidateStates: [],
       candidatePoolCount: candidatePool.length,
       selectedCandidateCount: 0,
       selectionMode,
@@ -156,13 +174,18 @@ export async function buildSymbolPreprocessCache(
         selectionMode,
         selectionSource: selection.source,
         providerSource: "none",
-        verifiedRemoteInference: false
+        verifiedRemoteInference: false,
+        candidateStates: [],
+        successfulCandidates: 0,
+        failedCandidates: 0
       })
     );
 
     return {
       cacheFile: emptyCache,
       candidates: [],
+      candidateStates: [],
+      failedCandidateCount: 0,
       source: "empty",
       selectionMode,
       selectionSource: selection.source,
@@ -170,12 +193,46 @@ export async function buildSymbolPreprocessCache(
     };
   }
 
+  const initialCandidateStates = getCurrentCandidateStates();
+  const initialCandidateMetrics = buildCandidateStateMetrics(initialCandidateStates);
+  options.onProgress?.(
+    createProgress(
+      candidatePool.length,
+      selectedCandidates.length,
+      initialCandidateMetrics.successfulCandidates,
+      sourceHash,
+      options.relativeFilePath,
+      {
+        status: "running",
+        completedSteps: 2,
+        batchCount: missingCandidates.length
+          ? Math.max(1, Math.ceil(missingCandidates.length / PREPROCESS_CHUNK_SIZE))
+          : 0,
+        processedBatches: 0,
+        currentStep: "Selected wordbook terms",
+        message: `Selected ${selectedCandidates.length} wordbook terms. ${initialCandidateMetrics.successfulCandidates} already cached.`,
+        selectionMode,
+        selectionSource: selection.source,
+        providerSource: canReuseExistingCache
+          ? existingCache?.inferenceSource ?? options.provider.id
+          : options.provider.id,
+        verifiedRemoteInference: canReuseExistingCache
+          ? existingCache?.verifiedRemoteInference ?? false
+          : false,
+        candidateStates: initialCandidateStates,
+        successfulCandidates: initialCandidateMetrics.successfulCandidates,
+        failedCandidates: initialCandidateMetrics.failedCandidates
+      }
+    )
+  );
+
   if (missingCandidates.length === 0) {
     const normalizedCache = buildCacheFile(
       options,
       sourceHash,
       sortPreprocessEntries(cachedEntries, selectedCandidates),
       {
+        candidateStates: initialCandidateStates,
         candidatePoolCount: candidatePool.length,
         selectedCandidateCount: selectedCandidates.length,
         selectionMode,
@@ -191,6 +248,7 @@ export async function buildSymbolPreprocessCache(
       !existingCache ||
       existingCache.sourceHash !== sourceHash ||
       existingCache.entries.length !== normalizedCache.entries.length ||
+      !areCandidateStatesEqual(existingCache.candidateStates, normalizedCache.candidateStates) ||
       existingCache.selectionMode !== normalizedCache.selectionMode ||
       existingCache.selectionSource !== normalizedCache.selectionSource ||
       existingCache.inferenceSource !== normalizedCache.inferenceSource ||
@@ -204,20 +262,27 @@ export async function buildSymbolPreprocessCache(
       createProgress(
         candidatePool.length,
         selectedCandidates.length,
-        normalizedCache.entries.length,
+        initialCandidateMetrics.successfulCandidates,
         sourceHash,
         options.relativeFilePath,
         {
-          status: "completed",
+          status: initialCandidateMetrics.failedCandidates > 0 ? "failed" : "completed",
           completedSteps: 5,
           batchCount: Math.max(1, Math.ceil(selectedCandidates.length / PREPROCESS_CHUNK_SIZE)),
           processedBatches: Math.max(1, Math.ceil(selectedCandidates.length / PREPROCESS_CHUNK_SIZE)),
-          currentStep: "Completed",
-          message: `Loaded ${normalizedCache.entries.length} cached wordbook entries.`,
+          currentStep:
+            initialCandidateMetrics.failedCandidates > 0 ? "Completed with failures" : "Completed",
+          message:
+            initialCandidateMetrics.failedCandidates > 0
+              ? `Loaded ${initialCandidateMetrics.successfulCandidates} cached wordbook entries. ${initialCandidateMetrics.failedCandidates} terms still need retry.`
+              : `Loaded ${normalizedCache.entries.length} cached wordbook entries.`,
           selectionMode,
           selectionSource: selection.source,
           providerSource: normalizedCache.inferenceSource ?? "cache",
-          verifiedRemoteInference: normalizedCache.verifiedRemoteInference ?? false
+          verifiedRemoteInference: normalizedCache.verifiedRemoteInference ?? false,
+          candidateStates: initialCandidateStates,
+          successfulCandidates: initialCandidateMetrics.successfulCandidates,
+          failedCandidates: initialCandidateMetrics.failedCandidates
         }
       )
     );
@@ -225,6 +290,8 @@ export async function buildSymbolPreprocessCache(
     return {
       cacheFile: normalizedCache,
       candidates: selectedCandidates,
+      candidateStates: initialCandidateStates,
+      failedCandidateCount: initialCandidateMetrics.failedCandidates,
       source: "cache",
       selectionMode,
       selectionSource: selection.source,
@@ -237,7 +304,9 @@ export async function buildSymbolPreprocessCache(
   let remainingCandidates = [...missingCandidates];
   let processedBatches = 0;
   let responseSource = options.provider.id;
-  let verifiedRemoteInference = false;
+  let verifiedRemoteInference = canReuseExistingCache
+    ? existingCache?.verifiedRemoteInference ?? false
+    : false;
 
   while (remainingCandidates.length > 0) {
     const nextChunk = takeNextPreprocessChunk(
@@ -246,11 +315,21 @@ export async function buildSymbolPreprocessCache(
       selectedCandidates
     );
 
+    for (const candidate of nextChunk) {
+      candidateStateMap.set(candidate.normalizedTerm, {
+        ...(candidateStateMap.get(candidate.normalizedTerm) ?? createCandidateState(candidate)),
+        status: "processing",
+        error: undefined
+      });
+    }
+
+    const processingCandidateStates = getCurrentCandidateStates();
+    const processingCandidateMetrics = buildCandidateStateMetrics(processingCandidateStates);
     options.onProgress?.(
       createProgress(
         candidatePool.length,
         selectedCandidates.length,
-        mergedEntries.size,
+        processingCandidateMetrics.successfulCandidates,
         sourceHash,
         options.relativeFilePath,
         {
@@ -262,31 +341,70 @@ export async function buildSymbolPreprocessCache(
           message: `Processing batch ${processedBatches + 1} / ${totalBatchCount} with ${nextChunk.length} terms.`,
           selectionMode,
           selectionSource: selection.source,
-          providerSource: responseSource
+          providerSource: responseSource,
+          verifiedRemoteInference,
+          candidateStates: processingCandidateStates,
+          successfulCandidates: processingCandidateMetrics.successfulCandidates,
+          failedCandidates: processingCandidateMetrics.failedCandidates
         }
       )
     );
 
-    const response = await options.provider.preprocessSymbols(
-      buildChunkRequest(options, nextChunk, sourceHash),
-      {
-        signal: options.signal
-      }
-    );
-    responseSource = response.source;
+    let chunkFailed = false;
 
-    if (response.source !== "openai-compatible") {
-      throw new Error(
-        `Preprocess inference was expected to use the remote API, but the provider reported source=${response.source}.`
+    try {
+      const response = await options.provider.preprocessSymbols(
+        buildChunkRequest(options, nextChunk, sourceHash),
+        {
+          signal: options.signal
+        }
       );
-    }
+      responseSource = response.source;
 
-    const normalizedChunkEntries = normalizePreprocessEntries(nextChunk, response.entries);
-    assertCompleteChunkResponse(nextChunk, normalizedChunkEntries);
-    verifiedRemoteInference = true;
+      if (response.source !== "openai-compatible") {
+        throw new Error(
+          `Preprocess inference was expected to use the remote API, but the provider reported source=${response.source}.`
+        );
+      }
 
-    for (const entry of normalizedChunkEntries) {
-      mergedEntries.set(entry.normalizedTerm, entry);
+      const normalizedChunkEntries = normalizePreprocessEntries(nextChunk, response.entries);
+      assertCompleteChunkResponse(nextChunk, normalizedChunkEntries);
+      verifiedRemoteInference = true;
+
+      for (const entry of normalizedChunkEntries) {
+        mergedEntries.set(entry.normalizedTerm, entry);
+        const candidate = nextChunk.find(
+          (chunkCandidate) => chunkCandidate.normalizedTerm === entry.normalizedTerm
+        );
+
+        if (candidate) {
+          candidateStateMap.set(entry.normalizedTerm, buildSucceededCandidateState(candidate, entry));
+        }
+      }
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        throw error;
+      }
+
+      chunkFailed = true;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      options.logger?.warn("Preprocess wordbook batch failed", {
+        relativeFilePath: options.relativeFilePath,
+        batchIndex: processedBatches + 1,
+        totalBatchCount,
+        candidateCount: nextChunk.length,
+        error: errorMessage
+      });
+
+      for (const candidate of nextChunk) {
+        candidateStateMap.set(candidate.normalizedTerm, {
+          ...(candidateStateMap.get(candidate.normalizedTerm) ?? createCandidateState(candidate)),
+          status: "failed",
+          summary: undefined,
+          generatedAt: undefined,
+          error: errorMessage
+        });
+      }
     }
 
     remainingCandidates = remainingCandidates.filter(
@@ -294,11 +412,14 @@ export async function buildSymbolPreprocessCache(
     );
     processedBatches += 1;
 
+    const partialCandidateStates = getCurrentCandidateStates();
+    const partialCandidateMetrics = buildCandidateStateMetrics(partialCandidateStates);
     const partialCache = buildCacheFile(
       options,
       sourceHash,
       sortPreprocessEntries(Array.from(mergedEntries.values()), selectedCandidates),
       {
+        candidateStates: partialCandidateStates,
         candidatePoolCount: candidatePool.length,
         selectedCandidateCount: selectedCandidates.length,
         selectionMode,
@@ -313,7 +434,7 @@ export async function buildSymbolPreprocessCache(
       createProgress(
         candidatePool.length,
         selectedCandidates.length,
-        partialCache.entries.length,
+        partialCandidateMetrics.successfulCandidates,
         sourceHash,
         options.relativeFilePath,
         {
@@ -322,16 +443,23 @@ export async function buildSymbolPreprocessCache(
           batchCount: totalBatchCount,
           processedBatches,
           currentStep: "Preprocessing wordbook chunk",
-          message: `Completed batch ${processedBatches} / ${totalBatchCount}. Cached ${partialCache.entries.length} entries.`,
+          message: chunkFailed
+            ? `Batch ${processedBatches} / ${totalBatchCount} failed. ${partialCandidateMetrics.failedCandidates} terms can be retried.`
+            : `Completed batch ${processedBatches} / ${totalBatchCount}. Cached ${partialCache.entries.length} entries.`,
           selectionMode,
           selectionSource: selection.source,
           providerSource: responseSource,
-          verifiedRemoteInference
+          verifiedRemoteInference,
+          candidateStates: partialCandidateStates,
+          successfulCandidates: partialCandidateMetrics.successfulCandidates,
+          failedCandidates: partialCandidateMetrics.failedCandidates
         }
       )
     );
   }
 
+  const finalCandidateStates = getCurrentCandidateStates();
+  const finalCandidateMetrics = buildCandidateStateMetrics(finalCandidateStates);
   const cacheFile = buildCacheFile(
     options,
     sourceHash,
@@ -340,6 +468,7 @@ export async function buildSymbolPreprocessCache(
       selectedCandidates
     ),
     {
+      candidateStates: finalCandidateStates,
       candidatePoolCount: candidatePool.length,
       selectedCandidateCount: selectedCandidates.length,
       selectionMode,
@@ -353,7 +482,7 @@ export async function buildSymbolPreprocessCache(
     createProgress(
       candidatePool.length,
       selectedCandidates.length,
-      cacheFile.entries.length,
+      finalCandidateMetrics.successfulCandidates,
       sourceHash,
       options.relativeFilePath,
       {
@@ -362,11 +491,17 @@ export async function buildSymbolPreprocessCache(
         batchCount: totalBatchCount,
         processedBatches,
         currentStep: "Finalizing cache",
-        message: `Finalizing ${cacheFile.entries.length} wordbook entries.`,
+        message:
+          finalCandidateMetrics.failedCandidates > 0
+            ? `Finalizing ${cacheFile.entries.length} wordbook entries with ${finalCandidateMetrics.failedCandidates} failed terms.`
+            : `Finalizing ${cacheFile.entries.length} wordbook entries.`,
         selectionMode,
         selectionSource: selection.source,
         providerSource: responseSource,
-        verifiedRemoteInference
+        verifiedRemoteInference,
+        candidateStates: finalCandidateStates,
+        successfulCandidates: finalCandidateMetrics.successfulCandidates,
+        failedCandidates: finalCandidateMetrics.failedCandidates
       }
     )
   );
@@ -380,6 +515,7 @@ export async function buildSymbolPreprocessCache(
     selectedCount: selectedCandidates.length,
     batchCount: totalBatchCount,
     symbolCount: cacheFile.entries.length,
+    failedCount: finalCandidateMetrics.failedCandidates,
     selectionMode,
     selectionSource: selection.source,
     source: responseSource,
@@ -390,20 +526,27 @@ export async function buildSymbolPreprocessCache(
     createProgress(
       candidatePool.length,
       selectedCandidates.length,
-      cacheFile.entries.length,
+      finalCandidateMetrics.successfulCandidates,
       sourceHash,
       options.relativeFilePath,
       {
-        status: "completed",
+        status: finalCandidateMetrics.failedCandidates > 0 ? "failed" : "completed",
         completedSteps: 5,
         batchCount: totalBatchCount,
         processedBatches,
-        currentStep: "Completed",
-        message: `Preprocessed ${cacheFile.entries.length} wordbook entries in ${totalBatchCount} batches.`,
+        currentStep:
+          finalCandidateMetrics.failedCandidates > 0 ? "Completed with failures" : "Completed",
+        message:
+          finalCandidateMetrics.failedCandidates > 0
+            ? `Preprocessed ${finalCandidateMetrics.successfulCandidates} wordbook entries. ${finalCandidateMetrics.failedCandidates} terms failed and can be retried.`
+            : `Preprocessed ${cacheFile.entries.length} wordbook entries in ${totalBatchCount} batches.`,
         selectionMode,
         selectionSource: selection.source,
         providerSource: responseSource,
-        verifiedRemoteInference
+        verifiedRemoteInference,
+        candidateStates: finalCandidateStates,
+        successfulCandidates: finalCandidateMetrics.successfulCandidates,
+        failedCandidates: finalCandidateMetrics.failedCandidates
       }
     )
   );
@@ -411,6 +554,8 @@ export async function buildSymbolPreprocessCache(
   return {
     cacheFile,
     candidates: selectedCandidates,
+    candidateStates: finalCandidateStates,
+    failedCandidateCount: finalCandidateMetrics.failedCandidates,
     source: responseSource,
     selectionMode,
     selectionSource: selection.source,
@@ -720,6 +865,7 @@ function buildCacheFile(
     | "selectionSource"
     | "inferenceSource"
     | "verifiedRemoteInference"
+    | "candidateStates"
   >
 ): PreprocessedSymbolCacheFile {
   return {
@@ -753,6 +899,146 @@ function normalizePreprocessEntries(
   }
 
   return normalizedEntries;
+}
+
+function buildCandidateStates(
+  candidates: PreprocessedSymbolCandidate[],
+  cachedEntries: PreprocessedSymbolEntry[],
+  cachedCandidateStates?: PreprocessCandidateState[]
+): PreprocessCandidateState[] {
+  const cachedEntryMap = new Map(cachedEntries.map((entry) => [entry.normalizedTerm, entry]));
+  const cachedStateMap = new Map(
+    (cachedCandidateStates ?? []).map((candidateState) => [
+      candidateState.normalizedTerm,
+      candidateState
+    ])
+  );
+
+  return candidates.map((candidate) => {
+    const cachedEntry = cachedEntryMap.get(candidate.normalizedTerm);
+
+    if (cachedEntry) {
+      return buildSucceededCandidateState(candidate, cachedEntry);
+    }
+
+    const cachedState = cachedStateMap.get(candidate.normalizedTerm);
+
+    if (
+      cachedState?.status === "succeeded" &&
+      cachedState.summary &&
+      !isPlaceholderPreprocessSummary(cachedState.summary)
+    ) {
+      return {
+        ...createCandidateState(candidate),
+        status: "succeeded",
+        summary: cachedState.summary,
+        generatedAt: cachedState.generatedAt
+      };
+    }
+
+    if (cachedState?.status === "failed") {
+      return {
+        ...createCandidateState(candidate),
+        status: "failed",
+        error: cachedState.error
+      };
+    }
+
+    return createCandidateState(candidate);
+  });
+}
+
+function createCandidateState(
+  candidate: PreprocessedSymbolCandidate
+): PreprocessCandidateState {
+  return {
+    term: candidate.term,
+    normalizedTerm: candidate.normalizedTerm,
+    category: candidate.category,
+    sourceLine: candidate.sourceLine,
+    references: candidate.references,
+    status: "pending"
+  };
+}
+
+function buildSucceededCandidateState(
+  candidate: PreprocessedSymbolCandidate,
+  entry: PreprocessedSymbolEntry
+): PreprocessCandidateState {
+  return {
+    ...createCandidateState(candidate),
+    status: "succeeded",
+    summary: entry.summary,
+    generatedAt: entry.generatedAt
+  };
+}
+
+function sortCandidateStates(
+  candidateStates: PreprocessCandidateState[],
+  candidates: PreprocessedSymbolCandidate[]
+): PreprocessCandidateState[] {
+  const orderMap = new Map(
+    candidates.map((candidate, index) => [candidate.normalizedTerm, index])
+  );
+
+  return [...candidateStates].sort((left, right) => {
+    return (
+      (orderMap.get(left.normalizedTerm) ?? Number.MAX_SAFE_INTEGER) -
+      (orderMap.get(right.normalizedTerm) ?? Number.MAX_SAFE_INTEGER)
+    );
+  });
+}
+
+function buildCandidateStateMetrics(candidateStates: PreprocessCandidateState[]): {
+  successfulCandidates: number;
+  failedCandidates: number;
+} {
+  return candidateStates.reduce(
+    (totals, candidateState) => {
+      if (candidateState.status === "succeeded") {
+        totals.successfulCandidates += 1;
+      }
+
+      if (candidateState.status === "failed") {
+        totals.failedCandidates += 1;
+      }
+
+      return totals;
+    },
+    {
+      successfulCandidates: 0,
+      failedCandidates: 0
+    }
+  );
+}
+
+function areCandidateStatesEqual(
+  left: PreprocessCandidateState[] | undefined,
+  right: PreprocessCandidateState[] | undefined
+): boolean {
+  if (!left?.length && !right?.length) {
+    return true;
+  }
+
+  if ((left?.length ?? 0) !== (right?.length ?? 0)) {
+    return false;
+  }
+
+  return (left ?? []).every((candidateState, index) => {
+    const compared = right?.[index];
+
+    return (
+      compared?.term === candidateState.term &&
+      compared.normalizedTerm === candidateState.normalizedTerm &&
+      compared.category === candidateState.category &&
+      compared.sourceLine === candidateState.sourceLine &&
+      compared.references === candidateState.references &&
+      compared.status === candidateState.status &&
+      compared.summary === candidateState.summary &&
+      compared.error === candidateState.error &&
+      compared.generatedAt === candidateState.generatedAt
+    );
+  });
 }
 
 function sortPreprocessEntries(
@@ -831,10 +1117,11 @@ function assertCompleteChunkResponse(
 }
 
 function isPlaceholderPreprocessEntry(entry: PreprocessedSymbolEntry): boolean {
-  return (
-    entry.isPlaceholder === true ||
-    /作用需要结合附近代码继续确认/.test(entry.summary)
-  );
+  return entry.isPlaceholder === true || isPlaceholderPreprocessSummary(entry.summary);
+}
+
+function isPlaceholderPreprocessSummary(summary: string | undefined): boolean {
+  return Boolean(summary && /作用需要结合附近代码继续确认/.test(summary));
 }
 
 function isAbortLikeError(error: unknown): boolean {

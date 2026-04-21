@@ -37,6 +37,7 @@ import { createContentHash } from "../utils/hash";
 import {
   ExtensionSettings,
   ExplanationRequest,
+  PreprocessedSymbolEntry,
   PreprocessProgress,
   SymbolPreprocessRequest
 } from "../contracts";
@@ -84,6 +85,27 @@ test("extractGlossaryEntries finds key symbols", () => {
   assert.ok(glossaryEntries.some((entry) => entry.term === "loadUsers"));
 });
 
+test("extractGlossaryEntries includes custom function definitions beyond plain declarations", () => {
+  const sourceCode = [
+    "const buildVector = (input) => input;",
+    "const normalizeData = async function(value) { return value; };",
+    "const handlers = {",
+    "  retryFailed(term) { return term; },",
+    "  flushQueue: (items) => items",
+    "};",
+    "class Service {",
+    "  computeScore(sample) { return sample; }",
+    "}"
+  ].join("\n");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "typescript");
+
+  assert.ok(glossaryEntries.some((entry) => entry.term === "buildVector" && entry.category === "function"));
+  assert.ok(glossaryEntries.some((entry) => entry.term === "normalizeData" && entry.category === "function"));
+  assert.ok(glossaryEntries.some((entry) => entry.term === "retryFailed" && entry.category === "function"));
+  assert.ok(glossaryEntries.some((entry) => entry.term === "flushQueue" && entry.category === "function"));
+  assert.ok(glossaryEntries.some((entry) => entry.term === "computeScore" && entry.category === "function"));
+});
+
 test("extractGlossaryEntries includes python variables and label strings", () => {
   const sourceCode = [
     "class_names = ['PCA', 'ICA']",
@@ -127,7 +149,7 @@ test("attachWordbookScopePaths groups entries by class and function scope", () =
     "def build_model():",
     "    return SpectralNet()"
   ].join("\n");
-  const entries = attachWordbookScopePaths(
+  const entries: PreprocessedSymbolEntry[] = attachWordbookScopePaths(
     [
       {
         term: "hidden_size",
@@ -153,7 +175,7 @@ test("attachWordbookScopePaths groups entries by class and function scope", () =
         summary: "build model",
         generatedAt: new Date().toISOString()
       }
-    ],
+    ] satisfies PreprocessedSymbolEntry[],
     sourceCode,
     "python"
   );
@@ -437,6 +459,8 @@ test("symbol preprocess builder writes batch results into file cache", async () 
     ["EmbeddingModel", "buildFeatureMap", "featureMap"]
   );
   assert.equal(cached?.entries.length ?? 0, 3);
+  assert.equal(cached?.candidateStates?.length ?? 0, 3);
+  assert.ok(cached?.candidateStates?.every((candidateState) => candidateState.status === "succeeded"));
   assert.ok(cached?.entries.some((entry) => entry.summary === "featureMap summary"));
   assert.ok(progressSnapshots.includes("completed:5"));
   await fs.rm(workspaceRoot, { recursive: true, force: true });
@@ -509,6 +533,8 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
     batchCount: number;
     processedBatches?: number;
     currentStep?: string;
+    candidateStateCount: number;
+    pendingCount: number;
   }> = [];
   const result = await buildSymbolPreprocessCache({
     editorText: sourceCode,
@@ -546,7 +572,11 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
       progressSnapshots.push({
         batchCount: progress.batchCount,
         processedBatches: progress.processedBatches,
-        currentStep: progress.currentStep
+        currentStep: progress.currentStep,
+        candidateStateCount: progress.candidateStates?.length ?? 0,
+        pendingCount:
+          progress.candidateStates?.filter((candidateState) => candidateState.status === "pending")
+            .length ?? 0
       });
     }
   });
@@ -557,7 +587,9 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
   assert.ok(
     progressSnapshots.some(
       (snapshot) =>
-        snapshot.currentStep === "Selecting wordbook terms" && snapshot.batchCount === 0
+        snapshot.currentStep === "Selected wordbook terms" &&
+        snapshot.candidateStateCount === 46 &&
+        snapshot.pendingCount === 46
     )
   );
   assert.ok(progressSnapshots.some((snapshot) => snapshot.batchCount === 3));
@@ -1223,7 +1255,7 @@ test("symbol preprocess smoke uses full file context and verifies remote inferen
   }
 });
 
-test("symbol preprocess builder rejects incomplete remote responses", async () => {
+test("symbol preprocess builder records failed candidates for incomplete remote responses", async () => {
   const workspaceRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "rcic-symbol-preprocess-incomplete-")
   );
@@ -1267,21 +1299,120 @@ test("symbol preprocess builder rejects incomplete remote responses", async () =
     }
   };
 
-  await assert.rejects(
-    () =>
-      buildSymbolPreprocessCache({
-        editorText: sourceCode,
-        languageId: "typescript",
-        filePath: "D:/workspace/src/example.ts",
-        relativeFilePath: "src/example.ts",
-        settings: createRemoteSettings(),
-        glossaryEntries,
-        candidatePool,
-        workspaceStore: store,
-        provider
-      }),
-    /Remote preprocess response was incomplete/
+  const result = await buildSymbolPreprocessCache({
+    editorText: sourceCode,
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    settings: createRemoteSettings(),
+    glossaryEntries,
+    candidatePool,
+    workspaceStore: store,
+    provider
+  });
+
+  assert.ok(result);
+  assert.equal(result?.cacheFile.entries.length, 0);
+  assert.equal(result?.failedCandidateCount, candidatePool.length);
+  assert.equal(result?.verifiedRemoteInference, false);
+  assert.ok(result?.cacheFile.candidateStates?.every((candidateState) => candidateState.status === "failed"));
+  assert.ok(
+    result?.cacheFile.candidateStates?.every((candidateState) =>
+      /Remote preprocess response was incomplete/.test(candidateState.error || "")
+    )
   );
+
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
+});
+
+test("symbol preprocess builder retries previously failed wordbook candidates", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-symbol-preprocess-retry-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const sourceCode = [
+    "const featureMap = buildFeatureMap(values);",
+    "function buildFeatureMap(input) { return input; }",
+    "class EmbeddingModel {}"
+  ].join("\n");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "typescript");
+  const candidatePool = buildPreprocessCandidatePool(glossaryEntries);
+  let preprocessCalls = 0;
+  const provider = {
+    id: "openai-compatible",
+    async explain() {
+      throw new Error("unused");
+    },
+    async answerFollowUp() {
+      return {
+        answer: "unused",
+        suggestedQuestions: [],
+        source: "openai-compatible",
+        latencyMs: 1
+      };
+    },
+    async preprocessSymbols(request: SymbolPreprocessRequest) {
+      preprocessCalls += 1;
+
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        source: "openai-compatible",
+        latencyMs: 20,
+        entries:
+          preprocessCalls === 1
+            ? request.candidates.slice(0, 1).map((candidate) => ({
+                term: candidate.term,
+                normalizedTerm: candidate.normalizedTerm,
+                category: candidate.category,
+                sourceLine: candidate.sourceLine,
+                summary: candidate.term + " summary",
+                generatedAt: new Date().toISOString()
+              }))
+            : request.candidates.map((candidate) => ({
+                term: candidate.term,
+                normalizedTerm: candidate.normalizedTerm,
+                category: candidate.category,
+                sourceLine: candidate.sourceLine,
+                summary: candidate.term + " summary",
+                generatedAt: new Date().toISOString()
+              }))
+      };
+    }
+  };
+
+  const firstResult = await buildSymbolPreprocessCache({
+    editorText: sourceCode,
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    settings: createRemoteSettings(),
+    glossaryEntries,
+    candidatePool,
+    workspaceStore: store,
+    provider
+  });
+
+  const secondResult = await buildSymbolPreprocessCache({
+    editorText: sourceCode,
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    settings: createRemoteSettings(),
+    glossaryEntries,
+    candidatePool,
+    workspaceStore: store,
+    provider
+  });
+
+  assert.ok(firstResult);
+  assert.ok(secondResult);
+  assert.equal(firstResult?.failedCandidateCount, candidatePool.length);
+  assert.equal(secondResult?.failedCandidateCount, 0);
+  assert.equal(secondResult?.cacheFile.entries.length, candidatePool.length);
+  assert.ok(secondResult?.cacheFile.candidateStates?.every((candidateState) => candidateState.status === "succeeded"));
+  assert.equal(preprocessCalls, 2);
 
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
