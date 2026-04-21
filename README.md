@@ -10,7 +10,7 @@ VS Code extension for reading source code in concise Chinese with:
 
 ## Version
 
-Current release baseline: `v0.1.2`
+Current release baseline: `v0.1.3`
 
 Remote wordbook preprocessing is now strict by default:
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 - 2026-04-22
+
+- tightened the wordbook tree row layout so the disclosure triangle and term stay on the same line by default
+- kept the tree-style wordbook structure while improving scanability for dense symbol lists
+
 ## 0.1.2 - 2026-04-21
 
 - expanded wordbook extraction so custom arrow functions, function expressions, object methods, and class methods can enter the file wordbook

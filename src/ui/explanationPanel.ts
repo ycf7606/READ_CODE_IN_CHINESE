@@ -436,6 +436,15 @@ export class ExplanationPanel implements vscode.Disposable {
         padding: 4px 8px;
       }
 
+      .tree-summary-head {
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: calc(100% - 18px);
+        vertical-align: middle;
+      }
+
       .tree-group > summary {
         font-weight: 600;
       }
@@ -919,6 +928,158 @@ export class ExplanationPanel implements vscode.Disposable {
         }
       }
 
+      function createStatusChip(status) {
+        const chip = document.createElement("span");
+        const labelMap = {
+          pending: "Pending",
+          processing: "Running",
+          succeeded: "Success",
+          failed: "Failed"
+        };
+        chip.className = "status-chip status-" + status;
+        chip.textContent = labelMap[status] || status;
+        return chip;
+      }
+
+      function buildWordbookTree(candidateStates) {
+        const root = {
+          groups: [],
+          terms: [],
+          groupMap: new Map()
+        };
+        const sortedStates = [...candidateStates].sort((left, right) => {
+          return (
+            (left.sourceLine || Number.MAX_SAFE_INTEGER) -
+              (right.sourceLine || Number.MAX_SAFE_INTEGER) ||
+            left.term.localeCompare(right.term)
+          );
+        });
+
+        for (const candidateState of sortedStates) {
+          const path =
+            Array.isArray(candidateState.scopePath) && candidateState.scopePath.length
+              ? candidateState.scopePath
+              : ["Module Scope"];
+          let current = root;
+
+          for (const segment of path) {
+            let group = current.groupMap.get(segment);
+
+            if (!group) {
+              group = {
+                label: segment,
+                groups: [],
+                terms: [],
+                groupMap: new Map()
+              };
+              current.groupMap.set(segment, group);
+              current.groups.push(group);
+            }
+
+            current = group;
+          }
+
+          current.terms.push(candidateState);
+        }
+
+        return root;
+      }
+
+      function renderWordbookCandidate(candidateState) {
+        const details = document.createElement("details");
+        details.className = "tree-term";
+
+        const summary = document.createElement("summary");
+        const head = document.createElement("span");
+        head.className = "tree-summary-head";
+
+        const label = document.createElement("span");
+        label.className = "tree-label";
+        label.textContent = candidateState.term;
+        head.appendChild(label);
+        head.appendChild(createStatusChip(candidateState.status));
+        summary.appendChild(head);
+        details.appendChild(summary);
+
+        const body = document.createElement("div");
+        body.className = "tree-term-body";
+
+        const meta = document.createElement("div");
+        meta.className = "tree-term-meta";
+        meta.textContent =
+          candidateState.category +
+          " | line " +
+          candidateState.sourceLine +
+          (typeof candidateState.references === "number"
+            ? " | refs " + candidateState.references
+            : "");
+        body.appendChild(meta);
+
+        const description = document.createElement("div");
+        description.className = "tree-term-summary";
+        description.textContent =
+          candidateState.status === "succeeded"
+            ? candidateState.summary || "Processed successfully, but no summary was returned."
+            : candidateState.status === "failed"
+              ? candidateState.error || "Processing failed. Click Retry Failed to try again."
+              : candidateState.status === "processing"
+                ? "This term is being preprocessed."
+                : "This term is selected and waiting for preprocessing.";
+        body.appendChild(description);
+
+        details.appendChild(body);
+        return details;
+      }
+
+      function renderWordbookGroup(group) {
+        const details = document.createElement("details");
+        details.className = "tree-group";
+
+        const summary = document.createElement("summary");
+        const head = document.createElement("span");
+        head.className = "tree-summary-head";
+
+        const label = document.createElement("span");
+        label.className = "tree-label";
+        label.textContent = group.label;
+        head.appendChild(label);
+        summary.appendChild(head);
+        details.appendChild(summary);
+
+        const children = document.createElement("div");
+        children.className = "tree-children";
+
+        for (const childGroup of group.groups) {
+          children.appendChild(renderWordbookGroup(childGroup));
+        }
+
+        for (const candidateState of group.terms) {
+          children.appendChild(renderWordbookCandidate(candidateState));
+        }
+
+        details.appendChild(children);
+        return details;
+      }
+
+      function renderWordbook(candidateStates) {
+        wordbook.innerHTML = "";
+
+        if (!candidateStates.length) {
+          renderEmpty(wordbook, "Run preprocessing to build the current file wordbook.");
+          return;
+        }
+
+        const tree = buildWordbookTree(candidateStates);
+        const container = document.createElement("div");
+        container.className = "wordbook-tree";
+
+        for (const group of tree.groups) {
+          container.appendChild(renderWordbookGroup(group));
+        }
+
+        wordbook.appendChild(container);
+      }
+
       function renderPreprocess(progress) {
         const lines = [];
         let percentage = 0;
@@ -969,29 +1130,6 @@ export class ExplanationPanel implements vscode.Disposable {
                 " / " +
                 progress.batchCount
             );
-          }
-          if (progress.selectionMode) {
-            lines.push(
-              "Selection mode: " +
-                (progress.selectionMode === "all-candidates"
-                  ? "all file-local symbols"
-                  : "audience-filtered")
-            );
-          }
-          if (progress.selectionSource) {
-            lines.push("Selection source: " + progress.selectionSource);
-          }
-          if (progress.providerSource) {
-            lines.push("Inference source: " + progress.providerSource);
-          }
-          if (typeof progress.verifiedRemoteInference === "boolean") {
-            lines.push(
-              "Remote inference verified: " +
-                (progress.verifiedRemoteInference ? "yes" : "no")
-            );
-          }
-          if (progress.currentStep) {
-            lines.push("Step: " + progress.currentStep);
           }
           if (progress.message) {
             lines.push(progress.message);
