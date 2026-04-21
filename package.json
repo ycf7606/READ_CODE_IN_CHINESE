@@ -2,7 +2,7 @@
   "name": "read-code-in-chinese",
   "displayName": "Read Code In Chinese",
   "description": "VS Code extension for turning source code into concise Chinese explanations.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "ycf7606",
   "license": "MPL-2.0",
   "repository": {
@@ -276,10 +276,12 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
+    "clean": "node scripts/clean-workspace.js",
+    "compile": "npm run clean && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "check": "tsc --noEmit -p ./",
     "test": "npm run compile && node --test --test-isolation=none dist/test/index.test.js",
+    "smoke:preprocess": "npm run compile && node scripts/smoke-preprocess.js",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

@@ -1,308 +1,159 @@
 # READ_CODE_IN_CHINESE
 
-`READ_CODE_IN_CHINESE` is a VS Code extension for turning source code into concise Chinese explanations while keeping terminology, official reference context, file role, and follow-up questions in one workflow.
+VS Code extension for reading source code in concise Chinese with:
 
-## What It Does
+- structured explanations for the current selection
+- file-level wordbook preprocessing for local symbols
+- optional OpenAI-compatible remote inference
+- workspace glossary and knowledge retrieval
+- follow-up chat in the same panel
 
-- Explain the current selection with a compact structured response
-- Detect multiple granularities:
-  - variable / token
-  - statement
-  - block
-  - function
-  - current file overview
-  - workspace file index
-- Maintain a file-level glossary cache and show it in the Explorer sidebar
-- Batch-preprocess user-defined file symbols into a reusable file-scoped cache
-- Let users edit glossary meanings and re-run explanations
-- Support follow-up chat in a side panel
-- Import local knowledge documents for retrieval-enhanced explanations
-- Sync official language documents into the workspace knowledge library
-- Show a first-run settings panel for provider, prompt, and hyperparameter setup
-- Keep the panel open and automatically refresh when the code selection changes
-- Write runtime diagnostics into a dedicated VS Code output channel
-- Use either:
-  - a local heuristic engine
-  - an OpenAI-compatible remote provider
+## Version
 
-## Current Status
+Current release baseline: `v0.1.1`
 
-- Stage 0-7 completed
-- Stage 19 wordbook scope grouping and member-function coverage are complete, so the wordbook now renders as a collapsible class/function tree and includes more class-local methods
-- Tracking board: `docs/project/WORKBOARD.md`
+Remote wordbook preprocessing is now strict by default:
+
+- all file-local preprocess candidates are sent to the remote provider
+- every preprocess chunk must come back with a complete result set
+- the UI shows whether remote inference was actually verified
+- fallback endpoints can be retried automatically when the primary endpoint fails
 
 ## Main Commands
 
 - `Read Code In Chinese: Explain Selection`
-- `Read Code In Chinese: Toggle Auto Explain`
-- `Read Code In Chinese: Open Conversation Panel`
 - `Read Code In Chinese: Explain Current File`
-- `Read Code In Chinese: Generate Workspace Index`
+- `Read Code In Chinese: Open Conversation Panel`
+- `Read Code In Chinese: Preprocess Current File Symbols`
 - `Read Code In Chinese: Refresh Glossary`
+- `Read Code In Chinese: Generate Workspace Index`
 - `Read Code In Chinese: Import Knowledge Documents`
 - `Read Code In Chinese: Sync Official Docs For Active Language`
-- `Read Code In Chinese: Preprocess Current File Symbols`
-- `Read Code In Chinese: Show Logs`
 - `Read Code In Chinese: Open Settings Panel`
+- `Read Code In Chinese: Show Logs`
 
-## Default Shortcuts
+## Provider Setup
 
-- `Ctrl+Alt+E`: explain current selection
-- `Ctrl+Alt+T`: toggle auto explain
-- `Ctrl+Alt+F`: explain current file
+### Local Mode
 
-## Sidebar And Panel
+Set:
 
-- Explorer sidebar view: `Code Glossary`
-- Webview panel:
-  - latest explanation
-  - active file and selection metadata
-  - one detected category for the current selection
-  - loading spinner while remote analysis is running
-  - automatic selection watching when the panel is open, without dropping the current source-editor context when the user clicks the panel
-  - inline reasoning-effort selector for follow-up chat
-  - settings button that opens the configuration panel
-  - preprocess progress with separate candidate-pool, selected-target, cached-entry, and batch counts
-  - visible full-file wordbook for the current file preprocess cache
-  - compact collapsible wordbook tree grouped by classes, functions, and module scope
-  - glossary snapshot
-  - workspace index preview
-  - follow-up chat
-- Output channel: `Read Code In Chinese`
+- `readCodeInChinese.provider.id = local`
 
-## Configuration
+This mode does not require API keys.
 
-### Auto Explain
+### OpenAI-Compatible Mode
 
-- `readCodeInChinese.autoExplain.enabled`
-- `readCodeInChinese.autoExplain.delayMs`
-- `readCodeInChinese.ui.autoOpenPanel`
+Set:
 
-### Provider
-
-- `readCodeInChinese.provider.id`
+- `readCodeInChinese.provider.id = openai-compatible`
 - `readCodeInChinese.provider.baseUrl`
 - `readCodeInChinese.provider.model`
 - `readCodeInChinese.provider.apiKeyEnvVar`
+
+Environment:
+
+```powershell
+$env:READ_CODE_IN_CHINESE_API_KEY="your-api-key"
+```
+
+Optional fallback endpoints:
+
+```powershell
+$env:READ_CODE_IN_CHINESE_PROVIDER_FALLBACKS='[
+  {"baseUrl":"https://fallback.example.com/v1","model":"gpt-5.4","apiKeyEnvVar":"READ_CODE_IN_CHINESE_API_KEY_FALLBACK"}
+]'
+```
+
+## Important Settings
+
+- `readCodeInChinese.provider.reasoningEffort`
 - `readCodeInChinese.provider.timeoutMs`
 - `readCodeInChinese.provider.temperature`
 - `readCodeInChinese.provider.topP`
 - `readCodeInChinese.provider.maxTokens`
-- `readCodeInChinese.provider.reasoningEffort`
 - `readCodeInChinese.preprocess.includeAllCandidates`
-
-### Explanation Output
-
 - `readCodeInChinese.explanation.detailLevel`
 - `readCodeInChinese.explanation.professionalLevel`
 - `readCodeInChinese.explanation.occupation`
 - `readCodeInChinese.explanation.sections`
 - `readCodeInChinese.explanation.userGoal`
 - `readCodeInChinese.prompt.customInstructions`
-
-### Knowledge Retrieval
-
 - `readCodeInChinese.knowledge.topK`
 
-## Provider Modes
+## Wordbook Preprocessing
 
-### Local Mode
+The wordbook cache is stored under:
 
-Use `readCodeInChinese.provider.id = local`.
-
-This mode:
-
-- works without API keys
-- uses local heuristics
-- uses imported knowledge snippets when available
-- is the safest default for offline development
-
-### OpenAI-Compatible Mode
-
-Use `readCodeInChinese.provider.id = openai-compatible` and set:
-
-- `readCodeInChinese.provider.baseUrl`
-- `readCodeInChinese.provider.model`
-- `readCodeInChinese.provider.temperature`
-- `readCodeInChinese.provider.topP`
-- `readCodeInChinese.provider.maxTokens`
-- environment variable named by `readCodeInChinese.provider.apiKeyEnvVar`
-
-Optional:
-
-- `READ_CODE_IN_CHINESE_PROVIDER_FALLBACKS` as a JSON array of backup OpenAI-compatible endpoints with `baseUrl`, `model`, and `apiKeyEnvVar`
-
-Example in PowerShell:
-
-```powershell
-$env:READ_CODE_IN_CHINESE_API_KEY="your-api-key"
+```text
+.read-code-in-chinese/preprocess/
 ```
 
-The settings panel can now edit:
+Behavior:
 
-- provider mode
-- base URL
-- model
-- API key environment variable name
-- timeout
-- occupation
-- user goal
-- generated global prompt instructions
-- sampling controls
-- reasoning effort
-- auto explain
-
-It can also:
-
-- generate the global prompt through the configured provider using the current audience and hyperparameter profile
-- show prompt-generation status inline before the user saves the final editable prompt
-
-Runtime explanation prompts also inject `occupation` and `professionalLevel` directly, so explanation tone can still adapt even if the editable prompt text is not regenerated after a profile change.
+- the active file is scanned for user-defined variables, functions, classes, types, and label-like strings
+- preprocessing uses full-file context
+- default mode preprocesses all file-local candidates
+- setting `readCodeInChinese.preprocess.includeAllCandidates = false` switches back to audience-filtered selection
+- incomplete remote batches fail immediately instead of writing partial “successful” cache entries
+- cache metadata records selection mode, selection source, inference source, and remote-verification state
 
 ## Knowledge Import
 
-The extension can import local `.md`, `.txt`, and `.json` files as retrieval documents.
+Supported import formats:
 
-- Command: `Read Code In Chinese: Import Knowledge Documents`
-- Imported files are stored in the workspace cache under `.read-code-in-chinese/knowledge/`
-- Retrieval is keyword-based and is attached to explanation requests
+- `.md`
+- `.txt`
+- `.json`
 
-Sample schema:
+See [IMPORTING_KNOWLEDGE.md](/D:/project/代码翻译/READ_CODE_IN_CHINESE/docs/knowledge/IMPORTING_KNOWLEDGE.md).
 
-```json
-[
-  {
-    "title": "fetch API basics",
-    "content": "fetch(url) sends an HTTP request and returns a promise.",
-    "tags": ["javascript", "http"]
-  }
-]
-```
+## Development
 
-More detail: `docs/knowledge/IMPORTING_KNOWLEDGE.md`
-
-## File Symbol Preprocessing
-
-When the remote provider is enabled, the extension can preprocess the active file's user-defined variables, functions, classes, types, and string-form labels in one batch using full-file context.
-
-- Preprocess cache path: `.read-code-in-chinese/preprocess/<file>.json`
-- Command: `Read Code In Chinese: Preprocess Current File Symbols`
-- By default, preprocessing now sends all file-local symbol candidates to the remote provider instead of pruning the wordbook first
-- `readCodeInChinese.preprocess.includeAllCandidates = false` restores the earlier audience-filtered selection pass
-- Wordbook preprocessing runs in chunks of about 20 terms, writes partial cache results after each chunk, and keeps reprioritizing remaining chunks around the areas the user is repeatedly reading
-- Wordbook preprocess prompts now force a fast remote path with low reasoning effort and shorter batch outputs
-- Each chunk now validates that the remote API returned every requested term; incomplete responses fail instead of silently caching partial results
-- If the primary remote endpoint fails, configured fallback endpoints are retried automatically before preprocessing is marked failed
-- Preprocess prompt shaping ignores explanation section preferences such as `summary`, `usage`, or `risk`
-- The preprocess UI now surfaces selection mode, inference source, and whether remote inference was verified
-- The explanation panel shows 5-step preprocess progress with distinct candidate-pool, selected-target, cached-entry, and batch counts, and it does not display batch counters during the earlier selection phase
-- The explanation panel shows the full file wordbook sourced from the current file preprocess cache instead of a short preview slice
-- Legacy placeholder cache entries from older builds are removed automatically when the file is reopened, so stale partial caches do not appear complete
-- Member function references such as `self.squeeze(...)`, `cls.build(...)`, and `this.load(...)` can now enter the wordbook candidate pool as file-local functions
-- Visible wordbook entries are annotated with scope paths from the active file and rendered as a collapsible class/function tree instead of one flat list
-- Single-symbol explanations first check this file-level preprocess cache before hitting the model again
-- If the user changes selection while an explanation request is still running, the older explanation is aborted and the newest selection wins
-- Background wordbook preprocessing keeps running while the user continues reading the same file
-- While the panel watches selections, explanation updates no longer keep re-revealing the panel and pulling focus away from the source editor
-
-## Token Knowledge Cache
-
-The older token knowledge cache still exists as a compatibility fallback for repeated remote token explanations.
-
-- Token cache path: `.read-code-in-chinese/token-knowledge/<language>.json`
-- It is used after the file-level preprocess cache misses
-- Successful remote token explanations can still be written into this cache for later reuse
-
-## Official Docs Sync
-
-The extension can fetch a preset bundle of official or reference language documents into the same workspace knowledge library.
-
-- Command: `Read Code In Chinese: Sync Official Docs For Active Language`
-- Current presets cover:
-  - TypeScript
-  - JavaScript
-  - Python
-  - Go
-  - Rust
-  - Java
-- Synced documents are chunked and stored in `.read-code-in-chinese/knowledge/library.json`
-- Partial sync success is allowed, so one failed page does not cancel the whole import
-- Synced docs enrich later explanation prompts and follow-up answers through retrieval
-
-## Glossary Workflow
-
-1. Open a source file in a workspace.
-2. Run an explanation or refresh the glossary.
-3. Check the `Code Glossary` view in the Explorer sidebar.
-4. Click a glossary item to edit its meaning.
-5. Re-run the explanation if you want updated wording immediately.
-
-## Workspace Index Workflow
-
-1. Open a workspace.
-2. Run `Read Code In Chinese: Generate Workspace Index`.
-3. The extension writes a markdown report under `.read-code-in-chinese/reports/workspace-index.md`.
-4. The report opens in the editor and a preview is also shown in the side panel.
-
-## Local Development
-
-### Install
+Install:
 
 ```powershell
 npm.cmd install
 ```
 
-### Compile
+Compile:
 
 ```powershell
 npm.cmd run compile
 ```
 
-### Test
+Test:
 
 ```powershell
 npm.cmd test
 ```
 
-### Run In VS Code
+Real remote wordbook smoke:
 
-1. Open this repository in VS Code.
-2. Run `npm.cmd install`.
-3. Run `npm.cmd run compile`.
-4. Put your provider settings into `.vscode/.env` if you want to test the remote provider locally.
-5. Press `F5` to start the Extension Development Host.
-6. The first activation now opens the settings panel automatically.
-7. Confirm or edit provider, prompt, and reasoning settings in the settings panel.
-8. Open the command palette and run `Read Code In Chinese: Open Conversation Panel`.
-9. Keep the panel open and select code to verify automatic explanation updates.
-10. Run `Read Code In Chinese: Sync Official Docs For Active Language` to import reference docs.
-11. Run `Read Code In Chinese: Preprocess Current File Symbols`, or keep the panel open and let the active file preprocess automatically.
-12. Re-select a user-defined symbol and verify that later lookups can return from `preprocess-cache`.
-13. If the panel still shows `Engine: local`, run `Read Code In Chinese: Show Logs` and check the effective provider settings written at activation time.
+```powershell
+npm.cmd run smoke:preprocess
+```
 
-The development host can now take provider defaults from environment variables, so testing against another workspace does not require copying provider settings into that target workspace.
+Run in VS Code:
 
-## Architecture
+1. Open the repository in VS Code.
+2. Put provider variables in `.vscode/.env` if you want remote testing.
+3. Run `npm.cmd install`.
+4. Press `F5`.
+5. Open the settings panel and confirm the provider.
+6. Run `Read Code In Chinese: Preprocess Current File Symbols`.
+7. Check the explanation panel for `Selection mode`, `Inference source`, and `Remote inference verified`.
 
-High-level architecture:
+## Repository Layout
 
-- `src/extension.ts`: command wiring, selection listeners, session flow, onboarding, preprocessing orchestration, logging, cache coordination, cancellation, and fallback handling
-- `src/analysis/`: glossary extraction and summary heuristics
+- `src/extension.ts`: command wiring and runtime orchestration
+- `src/analysis/`: glossary extraction, summary heuristics, and wordbook scope analysis
 - `src/providers/`: local and OpenAI-compatible providers
-- `src/knowledge/`: imported knowledge document store, official docs sync, file preprocess caching, token knowledge fallback, and retrieval
-- `src/logging/`: output channel runtime logger
-- `src/storage/`: workspace cache paths and JSON persistence
-- `src/ui/`: glossary tree, explanation panel, and settings panel
+- `src/knowledge/`: knowledge import, official docs sync, preprocess cache, token cache
+- `src/ui/`: explanation panel, settings panel, glossary tree
+- `src/test/index.test.ts`: regression tests
+- `docs/ARCHITECTURE.md`: compact architecture overview
 
-More detail: `docs/ARCHITECTURE.md`
+## License
 
-## Project Rules
-
-- Source code comments should use English.
-- The extension prefers local cache and lightweight heuristics before remote calls.
-- Imported knowledge is workspace-scoped.
-- Remote debug secrets stay local because `.vscode/` remains ignored.
-
-## License Note
-
-The repository currently uses `MPL-2.0`, which is already present in the repository. A stricter future non-commercial policy would not be equivalent to a standard OSI open-source license, so that policy question should be handled explicitly before any license change.
+`MPL-2.0`
