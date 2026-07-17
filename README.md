@@ -5,6 +5,8 @@
 ## What It Does
 
 - Explain the current selection with a compact structured response
+- Distinguish variables, functions, classes, constants, modules, and library symbols before choosing an explanation dimension
+- Reuse VS Code language-service hover signatures and documentation for Python library or built-in symbols without importing or executing the package
 - Detect multiple granularities:
   - variable / token
   - statement
@@ -19,7 +21,7 @@
 - Import local knowledge documents for retrieval-enhanced explanations
 - Sync official language documents into the workspace knowledge library
 - Show a first-run settings panel for provider, prompt, and hyperparameter setup
-- Keep the panel open and automatically refresh when the code selection changes
+- Keep the panel open, pause or resume selection following, and manually regenerate the current explanation without stealing editor focus
 - Write runtime diagnostics into a dedicated VS Code output channel
 - Use either:
   - a local heuristic engine
@@ -27,8 +29,11 @@
 
 ## Current Status
 
-- Stage 0-7 completed
-- Stage 19 wordbook scope grouping and member-function coverage are complete, so the wordbook now renders as a collapsible class/function tree and includes more class-local methods
+- The end-to-end extension workflow is implemented and covered by 41 unit tests plus a real VS Code Extension Host smoke test
+- The current stable feature baseline keeps the Stage 19 wordbook scope tree, Stage 29 per-chunk preprocessing fallback, and Stage 30 multi-endpoint remote failover
+- Stage 31 moved source-editor focus and asynchronous task lifecycle state into a dedicated controller so stale work cannot overwrite newer panel state
+- Stage 32 adds selection-aware variable/function explanations, concise Python API documentation, relevant-context preprocessing, and a hardened Chinese panel interaction flow
+- Stage 33 isolates same-name token caches, makes remote preprocessing privacy-first and opt-in, invalidates work on unsaved edits, and adds build fingerprints plus Extension Host coverage
 - Tracking board: `docs/project/WORKBOARD.md`
 
 ## Main Commands
@@ -57,15 +62,16 @@
 - Webview panel:
   - latest explanation
   - active file and selection metadata
-  - one detected category for the current selection
+  - detected symbol kind, origin, and qualified API name when available
   - loading spinner while remote analysis is running
-  - automatic selection watching when the panel is open, without dropping the current source-editor context when the user clicks the panel
+  - automatic selection watching with explicit pause/resume and regenerate controls
+  - immediate cancellation of obsolete explanation and follow-up work when the selection changes
   - inline reasoning-effort selector for follow-up chat
   - settings button that opens the configuration panel
   - preprocess progress with separate candidate-pool, selected-target, cached-entry, and batch counts
   - visible full-file wordbook for the current file preprocess cache
   - compact collapsible wordbook tree grouped by classes, functions, and module scope
-  - glossary snapshot
+  - compact current-file terminology
   - workspace index preview
   - follow-up chat
 - Output channel: `Read Code In Chinese`
@@ -84,11 +90,20 @@
 - `readCodeInChinese.provider.baseUrl`
 - `readCodeInChinese.provider.model`
 - `readCodeInChinese.provider.apiKeyEnvVar`
+- `readCodeInChinese.provider.fallbacks`
 - `readCodeInChinese.provider.timeoutMs`
 - `readCodeInChinese.provider.temperature`
 - `readCodeInChinese.provider.topP`
 - `readCodeInChinese.provider.maxTokens`
 - `readCodeInChinese.provider.reasoningEffort`
+- `readCodeInChinese.provider.requireTrustedWorkspace`
+
+### File Preprocessing
+
+- `readCodeInChinese.preprocess.mode`
+- `readCodeInChinese.preprocess.exclude`
+- `readCodeInChinese.preprocess.maxFileBytes`
+- `readCodeInChinese.preprocess.maxCandidates`
 
 ### Explanation Output
 
@@ -115,6 +130,8 @@ This mode:
 - uses local heuristics
 - uses imported knowledge snippets when available
 - is the safest default for offline development
+
+When `readCodeInChinese.provider.requireTrustedWorkspace` is enabled, an untrusted workspace automatically uses the local provider instead of sending source code to a remote endpoint.
 
 ### OpenAI-Compatible Mode
 
@@ -146,6 +163,8 @@ The settings panel can now edit:
 - sampling controls
 - reasoning effort
 - auto explain
+- workspace trust enforcement
+- preprocess mode, exclusions, file-size limit, and candidate limit
 
 It can also:
 
@@ -178,13 +197,20 @@ More detail: `docs/knowledge/IMPORTING_KNOWLEDGE.md`
 
 ## File Symbol Preprocessing
 
-When the remote provider is enabled, the extension can preprocess the active file's user-defined variables, functions, classes, types, and string-form labels in one batch using full-file context.
+When the remote provider is enabled, the extension can preprocess the active file's user-defined variables, functions, classes, types, and string-form labels using compact definition and reference windows.
 
 - Preprocess cache path: `.read-code-in-chinese/preprocess/<file>.json`
 - Command: `Read Code In Chinese: Preprocess Current File Symbols`
-- When a remote provider is enabled, a dedicated API selection pass chooses wordbook terms from the raw file candidate pool using full-file context, `professionalLevel`, and `occupation`
+- The default mode is `manual`; `onSave` and `idle` must be selected explicitly before background remote preprocessing can run
+- Untrusted workspaces, oversized files, and paths matching sensitive-file glob rules are rejected before a remote preprocessing request is created
+- When a remote provider is enabled and the file has at least 24 candidates, a dedicated API selection pass chooses wordbook terms from a compact relevant-context view using `professionalLevel` and `occupation`
+- Smaller candidate pools use fast local ranking and skip the extra remote selection request
 - Selection retention now stays broad by default: `beginner` keeps all candidates, `intermediate` keeps about 85%, and `expert` keeps about 70%
 - The second pass preprocesses only the selected terms into short wordbook-style entries
+- Variables are summarized by value meaning, source, and consumers; functions are summarized by responsibility, inputs/outputs, and important side effects
+- Each cache entry stores a symbol-context hash, so unrelated edits elsewhere in the file do not force unchanged symbols through the model again
+- Cache files also store a builder version and provider/audience fingerprint, so model, endpoint, audience, or algorithm changes invalidate incompatible summaries
+- Long Python/brace-delimited function scopes are retained up to a bounded limit, and the total context budget is divided across candidates so later symbols are not starved by earlier ones
 - Wordbook preprocessing runs in chunks of about 20 terms, writes partial cache results after each chunk, and keeps reprioritizing remaining chunks around the areas the user is repeatedly reading
 - Wordbook preprocess prompts now force a fast remote path with low reasoning effort and shorter batch outputs
 - Preprocess prompt shaping ignores explanation section preferences such as `summary`, `usage`, or `risk`
@@ -196,8 +222,16 @@ When the remote provider is enabled, the extension can preprocess the active fil
 - Visible wordbook entries are annotated with scope paths from the active file and rendered as a collapsible class/function tree instead of one flat list
 - Single-symbol explanations first check this file-level preprocess cache before hitting the model again
 - If the user changes selection while an explanation request is still running, the older explanation is aborted and the newest selection wins
-- Background wordbook preprocessing keeps running while the user continues reading the same file
+- Unsaved document edits cancel in-flight preprocessing immediately; `idle` mode may schedule a fresh run after editing stabilizes
 - While the panel watches selections, explanation updates no longer keep re-revealing the panel and pulling focus away from the source editor
+
+## Selection-Aware Explanations
+
+- Single-symbol requests classify the selection before prompting, so variables are explained as data flow while functions are explained as callable behavior
+- Python aliases such as `import numpy as np`, dotted imports such as `import os.path`, and multi-line `from ... import (...)` statements are resolved to qualified names
+- The extension asks the active VS Code language service for hover and definition data, using definition locations to distinguish workspace-local imports from installed libraries when possible
+- Library and built-in documentation is added as a concise `文档依据` section and is never expanded into a general API tutorial
+- Third-party packages are not imported or executed to discover documentation, avoiding package initialization side effects
 
 ## Token Knowledge Cache
 
@@ -205,6 +239,7 @@ The older token knowledge cache still exists as a compatibility fallback for rep
 
 - Token cache path: `.read-code-in-chinese/token-knowledge/<language>.json`
 - It is used after the file-level preprocess cache misses
+- Cache identity includes symbol origin, qualified API name, and local callsite context when needed, preventing same-name APIs such as `numpy.asarray` and `cupy.asarray` from sharing an explanation
 - Successful remote token explanations can still be written into this cache for later reuse
 
 ## Official Docs Sync
@@ -258,6 +293,15 @@ npm.cmd run compile
 npm.cmd test
 ```
 
+### Extension Host Smoke Test
+
+```powershell
+$env:VSCODE_EXECUTABLE_PATH="E:\Microsoft VS Code\Code.exe"
+npm.cmd run test:extension
+```
+
+If `VSCODE_EXECUTABLE_PATH` is omitted, the test runner downloads VS Code 1.89.1 into `.vscode-test/`.
+
 ### Run In VS Code
 
 1. Open this repository in VS Code.
@@ -270,7 +314,7 @@ npm.cmd test
 8. Open the command palette and run `Read Code In Chinese: Open Conversation Panel`.
 9. Keep the panel open and select code to verify automatic explanation updates.
 10. Run `Read Code In Chinese: Sync Official Docs For Active Language` to import reference docs.
-11. Run `Read Code In Chinese: Preprocess Current File Symbols`, or keep the panel open and let the active file preprocess automatically.
+11. Run `Read Code In Chinese: Preprocess Current File Symbols`, or explicitly change preprocessing mode to `onSave` / `idle` in settings.
 12. Re-select a user-defined symbol and verify that later lookups can return from `preprocess-cache`.
 13. If the panel still shows `Engine: local`, run `Read Code In Chinese: Show Logs` and check the effective provider settings written at activation time.
 
@@ -280,10 +324,11 @@ The development host can now take provider defaults from environment variables, 
 
 High-level architecture:
 
-- `src/extension.ts`: command wiring, selection listeners, session flow, onboarding, preprocessing orchestration, logging, cache coordination, cancellation, and fallback handling
-- `src/analysis/`: glossary extraction and summary heuristics
+- `src/extension.ts`: command wiring, selection listeners, onboarding, preprocessing orchestration, logging, cache coordination, and fallback handling
+- `src/runtime/`: source-editor tracking, task lifecycle, selection deduplication, and reading-priority state
+- `src/analysis/`: glossary extraction, selection semantics, preprocess policy, bounded scope context, and summary heuristics
 - `src/providers/`: local and OpenAI-compatible providers
-- `src/knowledge/`: imported knowledge document store, official docs sync, file preprocess caching, token knowledge fallback, and retrieval
+- `src/knowledge/`: imported knowledge document store, official docs sync, fingerprinted file preprocess caching, identity-safe token knowledge fallback, and retrieval
 - `src/logging/`: output channel runtime logger
 - `src/storage/`: workspace cache paths and JSON persistence
 - `src/ui/`: glossary tree, explanation panel, and settings panel

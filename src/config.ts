@@ -4,6 +4,7 @@ import {
   ExplanationSectionName,
   ExtensionSettings,
   Occupation,
+  PreprocessMode,
   ProviderEndpoint,
   ProviderId,
   ProfessionalLevel,
@@ -94,6 +95,11 @@ export function getSettings(): ExtensionSettings {
       (readStringEnv("READ_CODE_IN_CHINESE_PROVIDER_REASONING_EFFORT") as ReasoningEffort) ??
         "medium"
     ),
+    providerRequireTrustedWorkspace: getConfiguredValue<boolean>(
+      configuration,
+      "provider.requireTrustedWorkspace",
+      readBooleanEnv("READ_CODE_IN_CHINESE_PROVIDER_REQUIRE_TRUSTED_WORKSPACE") ?? true
+    ),
     detailLevel: getConfiguredValue<DetailLevel>(
       configuration,
       "explanation.detailLevel",
@@ -132,6 +138,37 @@ export function getSettings(): ExtensionSettings {
       configuration,
       "prompt.customInstructions",
       readStringEnv("READ_CODE_IN_CHINESE_PROMPT_CUSTOM_INSTRUCTIONS") ?? ""
+    ),
+    preprocessMode: getConfiguredValue<PreprocessMode>(
+      configuration,
+      "preprocess.mode",
+      (readStringEnv("READ_CODE_IN_CHINESE_PREPROCESS_MODE") as PreprocessMode) ?? "manual"
+    ),
+    preprocessExclude: getConfiguredValue<string[]>(
+      configuration,
+      "preprocess.exclude",
+      readStringArrayEnv("READ_CODE_IN_CHINESE_PREPROCESS_EXCLUDE") ?? [
+        "**/.env*",
+        "**/*.pem",
+        "**/*.key",
+        "**/secrets.*",
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/build/**",
+        "**/.git/**",
+        "**/*.min.js",
+        "**/*.map"
+      ]
+    ),
+    preprocessMaxFileBytes: getConfiguredValue<number>(
+      configuration,
+      "preprocess.maxFileBytes",
+      readNumberEnv("READ_CODE_IN_CHINESE_PREPROCESS_MAX_FILE_BYTES") ?? 262_144
+    ),
+    preprocessMaxCandidates: getConfiguredValue<number>(
+      configuration,
+      "preprocess.maxCandidates",
+      readNumberEnv("READ_CODE_IN_CHINESE_PREPROCESS_MAX_CANDIDATES") ?? 120
     )
   };
 }

@@ -5,16 +5,16 @@
 Every future work session must read these files in order before making changes:
 
 1. `D:\project\代码翻译\后续开发prompt.md`
-2. `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
-3. The latest file under `D:\project\代码翻译\READ_CODE_IN_CHINESE\docs\project\summaries\`
+2. `D:\project\READ_CODE_IN_CHINESE\docs\project\WORKBOARD.md`
+3. The latest file under `D:\project\READ_CODE_IN_CHINESE\docs\project\summaries\`
 4. Any stage baseline file directly referenced by the workboard
 
 ## Current Status
 
-- Repository: `D:\project\代码翻译\READ_CODE_IN_CHINESE`
+- Repository: `D:\project\READ_CODE_IN_CHINESE`
 - Active stage: Complete
-- Latest completed milestone: Stage 30
-- Latest summary: `docs/project/summaries/2026-04-15-stage-30.md`
+- Latest completed milestone: Stage 33
+- Latest summary: `docs/project/summaries/2026-07-17-stage-33.md`
 - Tracking policy:
   - New work must update this file.
   - Every completed task must be appended to `docs/project/COMPLETION_LOG.md`.
@@ -51,6 +51,9 @@ Every future work session must read these files in order before making changes:
 | 28 | Rollback to stable Stage 19 baseline | Completed | Pulled the Stage 19 code snapshot directly, removed Current Selection-era changes, and documented a safer rebuild route for Stage 20-22 capabilities |
 | 29 | Stage 19 preprocess reliability hardening | Completed | Added per-batch local fallback so remote preprocess failures no longer stop the whole wordbook job |
 | 30 | Multi-endpoint remote failover | Completed | Added primary-plus-fallback OpenAI-compatible endpoints, settings-panel editing, and provider-level remote failover |
+| 31 | Source editor session controller | Completed | Extracted task/editor session state, invalidated stale async failures, added disposal cleanup, and covered the controller with unit tests |
+| 32 | Selection semantics and interaction hardening | Completed | Added variable/function-specific explanation paths, concise Python hover documentation, bounded preprocessing context, race-safe panel updates, and VSIX verification |
+| 33 | Privacy-safe cache and preprocessing correctness | Completed | Isolated token identities, gated remote preprocessing, invalidated unsaved edits and incompatible caches, and added Extension Host tests |
 
 ## Completed Tasks
 
@@ -183,13 +186,26 @@ Every future work session must read these files in order before making changes:
 - [x] S30-03 Expose fallback endpoints in the settings panel and add regression coverage for remote endpoint failover.
 - [x] S30-04 Restore the user's local dev env so the original endpoint stays primary and the new endpoint is available as fallback without committing secrets.
 - [x] S30-05 Produce the Stage 30 summary file.
+- [x] S31-01 Extract source editor focus, task versions, cancellation, selection deduplication, and reading-priority state into a dedicated controller.
+- [x] S31-02 Prevent stale follow-up and preprocess failures from overwriting newer panel state or showing obsolete warnings.
+- [x] S31-03 Dispose pending tasks and timers with the extension lifecycle.
+- [x] S31-04 Add controller regression tests and update architecture/tracking documentation.
+- [x] S32-01 Add selection insight contracts and classify variable, function, type, constant, module, local, library, and Python built-in symbols.
+- [x] S32-02 Resolve Python import aliases and attach concise language-service signatures/documentation without importing packages.
+- [x] S32-03 Use bounded symbol context, context hashes, and small-pool local ranking to reduce preprocessing cost while preserving accuracy.
+- [x] S32-04 Harden selection cancellation and rebuild the explanation panel interaction with safe rendering, pause/resume, regeneration, disabled states, and Chinese labels.
+- [x] S32-05 Add regression coverage, pass type/test/diff verification, exclude compiled tests from the package, and validate a production VSIX.
+- [x] S33-01 Replace term-only token cache lookups with qualified API and callsite-safe v2 identities while retaining legacy reads.
+- [x] S33-02 Add explicit preprocess modes, workspace trust enforcement, exclusion globs, file-size limits, and candidate caps.
+- [x] S33-03 Cancel stale tasks on unsaved edits and validate preprocess work against the captured document version.
+- [x] S33-04 Add fair scope-aware context, preprocess builder versions, provider/audience fingerprints, and definition-provider origin hints.
+- [x] S33-05 Add unit and VS Code Extension Host tests, CI coverage, packaging verification, and Stage 33 documentation.
 
 ## Current Todo
 
-- [ ] Rebuild Stage 20 capabilities without reintroducing the top-of-page Current Selection card; keep qualified-call extraction but use lighter inline selection context.
-- [ ] Rebuild Stage 21 capabilities behind isolated helper modules so LSP layering and wordbook filtering do not increase `src/extension.ts` focus-state complexity.
-- [ ] Rebuild Stage 22 capabilities with panel hardening and scalable extraction, but keep panel state orchestration outside the webview rendering path.
-- [ ] Add a dedicated controller for source editor session state before reintroducing any post-Stage-19 panel/watch/runtime behavior.
+- [ ] Expand the Extension Host suite with direct webview-message assertions and untrusted-workspace launch coverage.
+- [ ] Distinguish dependencies installed inside workspace-local `.venv` / `node_modules` paths from genuine project definitions.
+- [ ] Reintroduce broader document-symbol/AST extraction only behind isolated helpers and measurable large-file performance tests.
 
 ## Open Decisions Locked for Now
 
@@ -226,6 +242,9 @@ Every future work session must read these files in order before making changes:
 - The replacement route after Stage 28 is to rebuild only the needed Stage 20-22 capabilities on top of Stage 19, with a dedicated controller for panel/watch/preprocess orchestration and without reviving the Current Selection-era explanation surface.
 - A Stage 29 reliability fix keeps Stage 19 preprocessing moving even when one remote wordbook batch times out, returns empty content, or otherwise fails mid-run.
 - A Stage 30 reliability upgrade adds ordered remote endpoint failover, so transient primary endpoint failures no longer force an immediate drop to local-only behavior.
+- A Stage 31 runtime refactor moves source-editor tracking and async task lifecycle state out of `src/extension.ts`, invalidates canceled work before abort callbacks run, and drops stale follow-up/preprocess failures before they can overwrite newer UI state.
+- A Stage 32 interaction upgrade classifies selected symbols before prompting, uses VS Code hover data for concise Python API evidence, reduces preprocess context and redundant calls, and prevents stale selection-inspection stages from writing obsolete panel state.
+- A Stage 33 correctness upgrade prevents same-name cache collisions, makes remote preprocessing opt-in and policy-gated, invalidates unsaved and configuration-incompatible work, and adds real Extension Host regression coverage.
 - The existing `LICENSE` is MPL-2.0. The user's desired "non-commercial + attribution required" policy is not equivalent to a standard OSI open-source license and remains a future licensing decision point.
 - Code comments inside the repository should use English by default.
 - Local VS Code debug files under `.vscode/` remain git-ignored so secrets do not reach the repository.

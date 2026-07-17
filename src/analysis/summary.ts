@@ -30,7 +30,7 @@ export function inferGranularity(
 ): ExplanationGranularity {
   const trimmedText = selectedText.trim();
 
-  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmedText)) {
+  if (/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(trimmedText)) {
     return "token";
   }
 

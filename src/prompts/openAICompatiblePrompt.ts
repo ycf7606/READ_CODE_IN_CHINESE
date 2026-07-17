@@ -33,9 +33,11 @@ export function buildExplainPrompts(request: ExplanationRequest): {
       "Use dictionary-style Chinese.",
       "Keep the summary to one or two short sentences.",
       "For each section, prefer 2 to 4 short bullet items in `items` instead of a long paragraph.",
+      "Keep the entire answer compact: no more than 8 bullet items unless the user explicitly asks for depth.",
       "If you still include `content`, keep it short and consistent with the bullet items.",
       "Do not include markdown fences.",
       "Ground the answer in the selected code and nearby context.",
+      buildSelectionSpecificGuidance(request),
       buildAudienceGuidance(request),
       request.customInstructions
     ].join(" "),
@@ -47,6 +49,7 @@ export function buildExplainPrompts(request: ExplanationRequest): {
       `Occupation: ${request.occupation}`,
       `Professional level: ${request.professionalLevel}`,
       `Requested sections: ${request.sections.join(", ")}`,
+      buildSelectionInsightContext(request),
       "",
       "Context before:",
       request.contextBefore || "(none)",
@@ -80,12 +83,20 @@ function buildTokenExplainPrompts(request: ExplanationRequest): {
 
   return {
     system: [
-      "You explain a single code token in concise Chinese.",
+      request.selectionInsight?.kind === "function"
+        ? "You explain a selected function or method symbol in concise Chinese."
+        : request.selectionInsight?.kind === "variable" ||
+            request.selectionInsight?.kind === "constant"
+          ? "You explain a selected variable or value-bearing symbol in concise Chinese."
+          : "You explain a single code token in concise Chinese.",
       "Return valid JSON only.",
       "Use this shape:",
       '{"title":"string","summary":"string","sections":[{"label":"string","items":["string"],"content":"string"}],"suggestedQuestions":["string"],"glossaryHints":[{"term":"string","meaning":"string","category":"variable"}],"note":"string"}',
       "Focus on the token's exact role at this callsite and in the current line.",
+      buildSelectionSpecificGuidance(request),
       "If the token is a library, framework, or API symbol, explain that concrete API usage here instead of giving a generic placeholder summary.",
+      "When language-service documentation is provided, treat it as the primary factual source and compress it into at most two short bullets.",
+      "Never invent parameters, return values, or library behavior that are absent from the code or documentation context.",
       "If the meaning is still ambiguous, say exactly what context is missing.",
       "Prefer short dictionary-style bullet items instead of long prose.",
       "Avoid generic placeholder wording.",
@@ -98,6 +109,7 @@ function buildTokenExplainPrompts(request: ExplanationRequest): {
       `Occupation: ${request.occupation}`,
       `Professional level: ${request.professionalLevel}`,
       `Goal: ${request.userGoal || "Explain the exact meaning of this token."}`,
+      buildSelectionInsightContext(request),
       "",
       "Selection line preview:",
       request.selectionPreview || "(none)",
@@ -171,6 +183,49 @@ function buildAudienceGuidance(request: ExplanationRequest): string {
   return `${occupationGuidance} ${levelGuidance}`;
 }
 
+function buildSelectionSpecificGuidance(request: ExplanationRequest): string {
+  const insight = request.selectionInsight;
+
+  if (request.granularity === "function" || insight?.kind === "function") {
+    return [
+      "Treat the selection as callable logic, not as a variable.",
+      "Prioritize its responsibility, inputs, return value, important control flow, and observable side effects.",
+      "For a library function, state only the callsite-relevant behavior and omit a general API tutorial."
+    ].join(" ");
+  }
+
+  if (insight?.kind === "variable" || insight?.kind === "constant") {
+    return [
+      "Treat the selection as data, not as callable logic.",
+      "Prioritize where the value comes from, what it represents here, how it changes, and where it flows next.",
+      "Mention type, shape, nullability, or units only when supported by the nearby code or language-service documentation."
+    ].join(" ");
+  }
+
+  if (insight?.kind === "class" || insight?.kind === "type") {
+    return "Prioritize the modeled concept, construction or constraints, and how this callsite uses the class or type.";
+  }
+
+  return "Choose the explanation dimension that matches the detected symbol kind and avoid generic identifier descriptions.";
+}
+
+function buildSelectionInsightContext(request: ExplanationRequest): string {
+  const insight = request.selectionInsight;
+
+  if (!insight) {
+    return "Selection insight: (none)";
+  }
+
+  return [
+    `Selection kind: ${insight.kind}`,
+    `Selection origin: ${insight.origin}`,
+    `Qualified name: ${insight.qualifiedName || "(unknown)"}`,
+    `Signature: ${insight.signature || "(not available)"}`,
+    `Documentation source: ${insight.documentationSource || "(not available)"}`,
+    `Documentation context: ${insight.documentation || "(not available)"}`
+  ].join("\n");
+}
+
 export function buildSymbolPreprocessPrompts(request: SymbolPreprocessRequest): {
   system: string;
   user: string;
@@ -190,6 +245,9 @@ export function buildSymbolPreprocessPrompts(request: SymbolPreprocessRequest): 
       "Return one short sentence per symbol.",
       "This is a file wordbook task, not a full explanation task.",
       "Focus only on the symbol's role in this file.",
+      "For variables, summarize the value meaning, source, and main consumer when visible.",
+      "For functions, summarize responsibility plus the most important input/output or side effect.",
+      "Do not describe variables as callable logic or functions as passive stored values.",
       "Do not mirror explanation sections such as summary, inputOutput, usage, syntax, or risk.",
       "Do not add sections, markdown, or extra keys.",
       "Do not explain imports, built-in syntax, or generic language rules.",

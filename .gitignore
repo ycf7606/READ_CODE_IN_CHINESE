@@ -3,3 +3,4 @@ dist/
 *.vsix
 .vscode/
 .read-code-in-chinese/
+.vscode-test/

@@ -92,10 +92,12 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
 
     return {
       requestId: request.requestId,
-      title: readStringValue(parsedResponse.title, "Code Explanation"),
-      summary: readStringValue(
-        parsedResponse.summary,
-        "No summary was returned by the provider."
+      title: readStringValue(parsedResponse.title, "Code Explanation").slice(0, 120),
+      summary: shortenWhitespace(
+        readStringValue(
+          parsedResponse.summary,
+          "No summary was returned by the provider."
+        )
       ),
       sections: normalizeSections(parsedResponse.sections),
       suggestedQuestions: normalizeStringArray(parsedResponse.suggestedQuestions),
@@ -104,7 +106,10 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
       selectionText: request.selectedText,
       source: this.id,
       latencyMs: Date.now() - startedAt,
-      note: typeof parsedResponse.note === "string" ? parsedResponse.note : undefined,
+      note:
+        typeof parsedResponse.note === "string"
+          ? shortenWhitespace(parsedResponse.note)
+          : undefined,
       knowledgeUsed: request.knowledgeSnippets.map((entry) => entry.title)
     };
   }
@@ -159,7 +164,7 @@ export class OpenAICompatibleProvider implements ExplanationProvider {
     });
 
     return {
-      answer: content.trim(),
+      answer: content.trim().slice(0, 1200),
       suggestedQuestions: [
         "它和上游调用链之间是什么关系？",
         "这里有没有隐藏的副作用或状态变化？"
@@ -610,8 +615,11 @@ function normalizeSections(value: unknown): ExplanationSection[] {
         : typeof heading === "string"
           ? heading.trim()
           : "section";
-    const content = typeof candidate.content === "string" ? candidate.content.trim() : "";
-    const items = normalizeStringArray(candidate.items);
+    const content =
+      typeof candidate.content === "string" ? shortenWhitespace(candidate.content) : "";
+    const items = normalizeStringArray(candidate.items)
+      .map((item) => shortenWhitespace(item))
+      .slice(0, 4);
     const fallbackItems = !items.length ? splitContentIntoItems(content) : items;
 
     if (!content && !fallbackItems.length) {
@@ -623,6 +631,10 @@ function normalizeSections(value: unknown): ExplanationSection[] {
       content,
       items: fallbackItems.length ? fallbackItems : undefined
     });
+
+    if (normalized.length >= 6) {
+      break;
+    }
   }
 
   return normalized;
@@ -712,7 +724,8 @@ function normalizePreprocessEntries(
 
     const candidate = entry as { term?: unknown; summary?: unknown };
     const term = typeof candidate.term === "string" ? candidate.term.trim() : "";
-    const summary = typeof candidate.summary === "string" ? candidate.summary.trim() : "";
+    const summary =
+      typeof candidate.summary === "string" ? shortenWhitespace(candidate.summary) : "";
 
     if (!term || !summary) {
       continue;

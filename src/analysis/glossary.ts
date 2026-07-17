@@ -250,9 +250,22 @@ export function extractGlossaryEntries(
     }
   }
 
+  for (const entry of glossaryMap.values()) {
+    const escapedTerm = escapeRegExp(entry.term);
+    const pattern =
+      entry.category === "label"
+        ? new RegExp(escapedTerm, "g")
+        : new RegExp(`\\b${escapedTerm}\\b`, "g");
+    entry.references = Math.max(entry.references, sourceCode.match(pattern)?.length ?? 0);
+  }
+
   return Array.from(glossaryMap.values())
     .sort((left, right) => right.references - left.references || left.term.localeCompare(right.term))
     .slice(0, maxEntries);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function mergeGlossaryWithUserOverrides(

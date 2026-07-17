@@ -9,6 +9,20 @@ import {
   getPreprocessTargetSelectionCount
 } from "../analysis/preprocess";
 import { extractGlossaryEntries } from "../analysis/glossary";
+import {
+  analyzeSelectionInsight,
+  compactHoverDocumentation,
+  resolvePythonQualifiedName
+} from "../analysis/selectionInsight";
+import { attachSelectionDocumentation } from "../analysis/explanationPostprocess";
+import {
+  evaluatePreprocessPolicy,
+  matchesGlob
+} from "../analysis/preprocessPolicy";
+import {
+  buildPreprocessSourceContext,
+  createCandidateContextHash
+} from "../analysis/symbolContext";
 import { attachWordbookScopePaths } from "../analysis/wordbook";
 import {
   buildFileOverviewSummary,
@@ -19,10 +33,17 @@ import { getOfficialDocsPreset } from "../knowledge/officialDocs";
 import { KnowledgeStore } from "../knowledge/knowledgeStore";
 import { PreprocessStore } from "../knowledge/preprocessStore";
 import {
+  createPreprocessBuildFingerprint,
+  PREPROCESS_BUILDER_VERSION
+} from "../knowledge/preprocessFingerprint";
+import {
   buildCachedPreprocessExplanation,
   buildSymbolPreprocessCache
 } from "../knowledge/symbolPreprocessBuilder";
-import { TokenKnowledgeStore } from "../knowledge/tokenKnowledgeStore";
+import {
+  createTokenKnowledgeCacheKey,
+  TokenKnowledgeStore
+} from "../knowledge/tokenKnowledgeStore";
 import {
   generateGlobalPrompt,
   generatePreprocessAudiencePrompt
@@ -30,13 +51,107 @@ import {
 import { buildExplainPrompts } from "../prompts/openAICompatiblePrompt";
 import { LocalExplanationProvider } from "../providers/localProvider";
 import { OpenAICompatibleProvider } from "../providers/openAICompatibleProvider";
+import { SourceEditorSessionController } from "../runtime/sourceEditorSession";
 import { WorkspaceStore } from "../storage/workspaceStore";
 import { createContentHash } from "../utils/hash";
 import {
   ExplanationRequest,
+  ExtensionSettings,
   PreprocessProgress,
   SymbolPreprocessRequest
 } from "../contracts";
+
+function createTestSettings(
+  overrides: Partial<ExtensionSettings> = {}
+): ExtensionSettings {
+  return {
+    autoExplainEnabled: false,
+    autoExplainDelayMs: 600,
+    autoOpenPanel: true,
+    providerId: "openai-compatible",
+    providerBaseUrl: "https://example.com/v1",
+    providerModel: "test-model",
+    providerApiKeyEnvVar: "READ_CODE_IN_CHINESE_API_KEY",
+    providerFallbacks: [],
+    providerTimeoutMs: 20_000,
+    providerTemperature: 0.2,
+    providerTopP: 1,
+    providerMaxTokens: 1200,
+    providerReasoningEffort: "medium",
+    providerRequireTrustedWorkspace: true,
+    detailLevel: "balanced",
+    professionalLevel: "beginner",
+    occupation: "developer",
+    sections: ["summary", "usage"],
+    userGoal: "",
+    knowledgeTopK: 3,
+    customInstructions: "",
+    preprocessMode: "manual",
+    preprocessExclude: [],
+    preprocessMaxFileBytes: 262_144,
+    preprocessMaxCandidates: 120,
+    ...overrides
+  };
+}
+
+test("source editor session keeps one current task per workflow", () => {
+  const session = new SourceEditorSessionController<string>();
+  const firstTask = session.startTask("explain");
+  let firstTaskWasCurrentDuringAbort = true;
+  firstTask.controller.signal.addEventListener("abort", () => {
+    firstTaskWasCurrentDuringAbort = session.isTaskCurrent("explain", firstTask.version);
+  });
+  const secondTask = session.startTask("explain");
+
+  assert.equal(firstTask.controller.signal.aborted, true);
+  assert.equal(firstTaskWasCurrentDuringAbort, false);
+  assert.equal(session.isTaskCurrent("explain", firstTask.version), false);
+  assert.equal(session.isTaskCurrent("explain", secondTask.version), true);
+  assert.equal(session.finishTask("explain", firstTask.version), false);
+  assert.equal(session.finishTask("explain", secondTask.version), true);
+  assert.equal(session.isTaskCurrent("explain", secondTask.version), false);
+});
+
+test("source editor session clears canceled tasks and preserves editor fallback", () => {
+  const session = new SourceEditorSessionController("initial-editor");
+  const task = session.startTask("preprocess");
+
+  session.trackEditor("tracked-editor");
+
+  assert.equal(session.getPreferredEditor(), "tracked-editor");
+  assert.equal(session.getPreferredEditor("explicit-editor", "active-editor"), "explicit-editor");
+  assert.equal(session.getPreferredEditor(undefined, "active-editor"), "active-editor");
+  assert.equal(session.cancelTask("preprocess"), task);
+  assert.equal(task.controller.signal.aborted, true);
+  assert.equal(session.isTaskCurrent("preprocess", task.version), false);
+
+  const followUpTask = session.startTask("follow-up");
+  session.dispose();
+
+  assert.equal(followUpTask.controller.signal.aborted, true);
+  assert.equal(session.getPreferredEditor(), undefined);
+});
+
+test("source editor session deduplicates selections and prioritizes recent reading areas", () => {
+  const session = new SourceEditorSessionController<string>(undefined, 2);
+
+  assert.equal(session.acceptAutoExplainSignature("file:1:token"), true);
+  assert.equal(session.acceptAutoExplainSignature("file:1:token"), false);
+  assert.equal(session.acceptAutoExplainSignature("file:2:token"), true);
+  session.resetAutoExplainSignature();
+  assert.equal(session.acceptAutoExplainSignature("file:2:token"), true);
+
+  session.recordSelectionLine("src/example.ts", 1);
+  session.recordSelectionLine("src/example.ts", 100);
+  session.recordSelectionLine("src/example.ts", 101);
+
+  assert.equal(session.getSelectionPriorityScore("src/example.ts", 1), 0);
+  assert.ok(
+    session.getSelectionPriorityScore("src/example.ts", 101) >
+      session.getSelectionPriorityScore("src/example.ts", 80)
+  );
+  assert.equal(session.getSelectionPriorityScore("src/other.ts", 101), 0);
+});
 
 test("extractGlossaryEntries finds key symbols", () => {
   const sourceCode = [
@@ -133,8 +248,272 @@ test("attachWordbookScopePaths groups entries by class and function scope", () =
 
 test("inferGranularity distinguishes token, function, and block", () => {
   assert.equal(inferGranularity("userCount", 1), "token");
+  assert.equal(inferGranularity("numpy.asarray", 1), "token");
   assert.equal(inferGranularity("function loadUsers(id) { return id; }", 1), "function");
   assert.equal(inferGranularity("if (ready) {\n  run();\n}", 3), "block");
+});
+
+test("selection insight separates local variables from Python library functions", () => {
+  const sourceCode = [
+    "import numpy as np",
+    "feature_map = np.asarray(values)",
+    "result = feature_map.mean()"
+  ].join("\n");
+  const glossaryEntries = extractGlossaryEntries(sourceCode, "python");
+  const variableInsight = analyzeSelectionInsight({
+    languageId: "python",
+    sourceCode,
+    selectedText: "feature_map",
+    selectionPreview: "[[feature_map]] = np.asarray(values)",
+    granularity: "token",
+    glossaryEntries
+  });
+  const functionInsight = analyzeSelectionInsight({
+    languageId: "python",
+    sourceCode,
+    selectedText: "asarray",
+    selectionPreview: "feature_map = np.[[asarray]](values)",
+    granularity: "token",
+    glossaryEntries,
+    hoverText: [
+      "```python",
+      "def asarray(a, dtype=None) -> ndarray",
+      "```",
+      "Convert the input to an array. The result may reuse existing memory."
+    ].join("\n")
+  });
+
+  assert.equal(variableInsight?.kind, "variable");
+  assert.equal(variableInsight?.origin, "local");
+  assert.equal(functionInsight?.kind, "function");
+  assert.equal(functionInsight?.origin, "library");
+  assert.equal(functionInsight?.qualifiedName, "numpy.asarray");
+  assert.match(functionInsight?.signature ?? "", /def asarray/);
+  assert.match(functionInsight?.documentation ?? "", /Convert the input/);
+});
+
+test("definition origin hint keeps workspace Python imports local", () => {
+  const insight = analyzeSelectionInsight({
+    languageId: "python",
+    sourceCode: "from project.helpers import build_result",
+    selectedText: "build_result",
+    selectionPreview: "value = [[build_result]](items)",
+    granularity: "token",
+    glossaryEntries: [],
+    originHint: "local",
+    hoverText: "```python\ndef build_result(items) -> Result\n```"
+  });
+
+  assert.equal(insight?.qualifiedName, "project.helpers.build_result");
+  assert.equal(insight?.origin, "local");
+  assert.equal(insight?.kind, "function");
+});
+
+test("Python qualified-name resolution and hover documentation stay compact", () => {
+  const sourceCode = [
+    "from pathlib import Path as FilePath",
+    "import pandas as pd",
+    "import os.path",
+    "from collections import (",
+    "    Counter,",
+    "    defaultdict as DefaultDict,",
+    ")"
+  ].join("\n");
+  const longDocumentation =
+    "First sentence explains the API. Second sentence adds one constraint. " +
+    "Third sentence should not be needed. ".repeat(20);
+
+  assert.equal(
+    resolvePythonQualifiedName(sourceCode, "[[FilePath]]('a.txt')", "FilePath"),
+    "pathlib.Path"
+  );
+  assert.equal(
+    resolvePythonQualifiedName(sourceCode, "pd.[[DataFrame]](rows)", "DataFrame"),
+    "pandas.DataFrame"
+  );
+  assert.equal(
+    resolvePythonQualifiedName(sourceCode, "os.path.[[join]]('a', 'b')", "join"),
+    "os.path.join"
+  );
+  assert.equal(
+    resolvePythonQualifiedName(sourceCode, "[[Counter]](items)", "Counter"),
+    "collections.Counter"
+  );
+  assert.equal(
+    resolvePythonQualifiedName(sourceCode, "[[DefaultDict]](list)", "DefaultDict"),
+    "collections.defaultdict"
+  );
+  assert.ok((compactHoverDocumentation(longDocumentation)?.length ?? 0) <= 360);
+  assert.doesNotMatch(compactHoverDocumentation(longDocumentation) ?? "", /Third sentence/);
+});
+
+test("library documentation is attached once and stays concise", () => {
+  const request: ExplanationRequest = {
+    requestId: "library-doc",
+    reason: "manual",
+    languageId: "python",
+    filePath: "D:/workspace/example.py",
+    relativeFilePath: "example.py",
+    selectedText: "asarray",
+    selectionPreview: "result = np.[[asarray]](values)",
+    granularity: "token",
+    detailLevel: "balanced",
+    occupation: "developer",
+    professionalLevel: "intermediate",
+    sections: ["summary", "usage"],
+    userGoal: "",
+    customInstructions: "",
+    contextBefore: "import numpy as np",
+    contextAfter: "",
+    selectionInsight: {
+      term: "asarray",
+      kind: "function",
+      origin: "library",
+      qualifiedName: "numpy.asarray",
+      signature: "def asarray(a, dtype=None) -> ndarray",
+      documentation: "Convert the input to an array. " + "Additional implementation detail. ".repeat(30),
+      documentationSource: "language-service"
+    },
+    glossaryEntries: [],
+    knowledgeSnippets: []
+  };
+  const response = {
+    requestId: request.requestId,
+    title: "numpy.asarray",
+    summary: "把当前输入转换为数组。",
+    sections: [],
+    suggestedQuestions: [],
+    glossaryHints: [],
+    granularity: request.granularity,
+    selectionText: request.selectedText,
+    source: "openai-compatible",
+    latencyMs: 10,
+    knowledgeUsed: []
+  };
+  const attached = attachSelectionDocumentation(response, request);
+  const attachedAgain = attachSelectionDocumentation(attached, request);
+  const glossaryOnly = attachSelectionDocumentation(response, {
+    ...request,
+    selectionInsight: {
+      term: "asarray",
+      kind: "function",
+      origin: "library",
+      qualifiedName: "numpy.asarray",
+      documentation: "Generated glossary wording, not language-service documentation.",
+      documentationSource: "glossary"
+    }
+  });
+
+  assert.equal(attached.sections[0]?.label, "文档依据");
+  assert.match(attached.sections[0]?.items?.[0] ?? "", /def asarray/);
+  assert.ok((attached.sections[0]?.items?.[1]?.length ?? 0) <= 286);
+  assert.equal(attachedAgain.sections.filter((section) => section.label === "文档依据").length, 1);
+  assert.equal(glossaryOnly.sections.length, 0);
+});
+
+test("preprocess source context keeps relevant definition and usage windows", () => {
+  const sourceCode = [
+    "const featureMap = buildFeatureMap(values);",
+    "const unrelated = 1;",
+    "function helper() { return unrelated; }",
+    "consume(featureMap);"
+  ].join("\n");
+  const candidate = {
+    term: "featureMap",
+    normalizedTerm: "featuremap",
+    category: "variable" as const,
+    sourceLine: 1,
+    references: 2,
+    score: 50
+  };
+  const context = buildPreprocessSourceContext(sourceCode, [candidate]);
+
+  assert.match(context, /1: const featureMap/);
+  assert.match(context, /4: consume\(featureMap\)/);
+  assert.equal(
+    createCandidateContextHash(sourceCode, candidate),
+    createCandidateContextHash(sourceCode, candidate)
+  );
+});
+
+test("preprocess source context preserves long scopes and gives every candidate a budget", () => {
+  const sourceCode = [
+    "def first(items):",
+    ...Array.from({ length: 18 }, (_, index) => `    step_${index} = items[${index}]`),
+    "    return step_17",
+    "",
+    "def second(value):",
+    "    return value * 2"
+  ].join("\n");
+  const candidates = [
+    {
+      term: "first",
+      normalizedTerm: "first",
+      category: "function" as const,
+      sourceLine: 1,
+      references: 1,
+      score: 100
+    },
+    {
+      term: "second",
+      normalizedTerm: "second",
+      category: "function" as const,
+      sourceLine: 22,
+      references: 1,
+      score: 90
+    }
+  ];
+  const fullContext = buildPreprocessSourceContext(sourceCode, candidates);
+  const limitedContext = buildPreprocessSourceContext(sourceCode, candidates, 260);
+
+  assert.match(fullContext, /20:     return step_17/);
+  assert.match(limitedContext, /### first/);
+  assert.match(limitedContext, /### second/);
+  assert.ok(limitedContext.length <= 260);
+});
+
+test("preprocess policy blocks unsafe automatic uploads", () => {
+  assert.equal(matchesGlob(".env.local", "**/.env*"), true);
+  assert.equal(matchesGlob("config/secrets.json", "**/secrets.*"), true);
+  assert.equal(
+    evaluatePreprocessPolicy({
+      trigger: "idle",
+      mode: "manual",
+      workspaceTrusted: true,
+      requireTrustedWorkspace: true,
+      relativeFilePath: "src/example.ts",
+      fileBytes: 100,
+      maxFileBytes: 1000,
+      excludePatterns: []
+    }).allowed,
+    false
+  );
+  assert.match(
+    evaluatePreprocessPolicy({
+      trigger: "manual",
+      mode: "manual",
+      workspaceTrusted: false,
+      requireTrustedWorkspace: true,
+      relativeFilePath: "src/example.ts",
+      fileBytes: 100,
+      maxFileBytes: 1000,
+      excludePatterns: []
+    }).reason ?? "",
+    /未受信任/
+  );
+  assert.match(
+    evaluatePreprocessPolicy({
+      trigger: "manual",
+      mode: "manual",
+      workspaceTrusted: true,
+      requireTrustedWorkspace: true,
+      relativeFilePath: ".env.local",
+      fileBytes: 100,
+      maxFileBytes: 1000,
+      excludePatterns: ["**/.env*"]
+    }).reason ?? "",
+    /排除规则/
+  );
 });
 
 test("workspace file summary produces a concise overview", () => {
@@ -307,6 +686,173 @@ test("preprocess store reads back file-scoped cache entries", async () => {
   await fs.rm(workspaceRoot, { recursive: true, force: true });
 });
 
+test("symbol preprocess reuses unchanged symbol context after unrelated edits", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-symbol-context-cache-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const sourceBefore = [
+    "const featureMap = buildFeatureMap(values);",
+    "consume(featureMap);",
+    "",
+    "const distantSetting = 1;"
+  ].join("\n");
+  const sourceAfter = sourceBefore.replace("distantSetting = 1", "distantSetting = 2");
+  const candidatePool = [
+    {
+      term: "featureMap",
+      normalizedTerm: "featuremap",
+      category: "variable" as const,
+      sourceLine: 1,
+      references: 2,
+      score: 80
+    }
+  ];
+  let preprocessCallCount = 0;
+  const provider = {
+    id: "openai-compatible",
+    async explain() {
+      throw new Error("unused");
+    },
+    async answerFollowUp() {
+      return {
+        answer: "unused",
+        suggestedQuestions: [],
+        source: "openai-compatible",
+        latencyMs: 1
+      };
+    },
+    async preprocessSymbols(request: SymbolPreprocessRequest) {
+      preprocessCallCount += 1;
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        source: "openai-compatible",
+        latencyMs: 1,
+        entries: request.candidates.map((candidate) => ({
+          term: candidate.term,
+          normalizedTerm: candidate.normalizedTerm,
+          category: candidate.category,
+          sourceLine: candidate.sourceLine,
+          summary: "Stores the current feature mapping.",
+          generatedAt: new Date().toISOString()
+        }))
+      };
+    }
+  };
+  const baseOptions = {
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    settings: createTestSettings(),
+    glossaryEntries: [],
+    candidatePool,
+    workspaceStore: store,
+    provider
+  };
+
+  await buildSymbolPreprocessCache({
+    ...baseOptions,
+    editorText: sourceBefore
+  });
+  const secondResult = await buildSymbolPreprocessCache({
+    ...baseOptions,
+    editorText: sourceAfter
+  });
+
+  assert.equal(preprocessCallCount, 1);
+  assert.equal(secondResult?.source, "cache");
+  assert.ok(secondResult?.cacheFile.entries[0]?.contextHash);
+  assert.equal(secondResult?.cacheFile.sourceHash, createContentHash(sourceAfter));
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
+});
+
+test("symbol preprocess invalidates cache when the build fingerprint changes", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-symbol-fingerprint-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const sourceCode = "const featureMap = buildFeatureMap(values);";
+  const candidatePool = [
+    {
+      term: "featureMap",
+      normalizedTerm: "featuremap",
+      category: "variable" as const,
+      sourceLine: 1,
+      references: 1,
+      score: 100
+    }
+  ];
+  let preprocessCallCount = 0;
+  const provider = {
+    id: "openai-compatible",
+    async explain() {
+      throw new Error("unused");
+    },
+    async answerFollowUp() {
+      return {
+        answer: "unused",
+        suggestedQuestions: [],
+        source: "openai-compatible",
+        latencyMs: 1
+      };
+    },
+    async preprocessSymbols(request: SymbolPreprocessRequest) {
+      preprocessCallCount += 1;
+      return {
+        requestId: request.requestId,
+        languageId: request.languageId,
+        source: "openai-compatible",
+        latencyMs: 1,
+        entries: request.candidates.map((candidate) => ({
+          term: candidate.term,
+          normalizedTerm: candidate.normalizedTerm,
+          category: candidate.category,
+          sourceLine: candidate.sourceLine,
+          summary: `summary-${preprocessCallCount}`,
+          generatedAt: new Date().toISOString()
+        }))
+      };
+    }
+  };
+  const firstSettings = createTestSettings({ providerModel: "model-a" });
+  const secondSettings = createTestSettings({ providerModel: "model-b" });
+
+  const first = await buildSymbolPreprocessCache({
+    editorText: sourceCode,
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    settings: firstSettings,
+    glossaryEntries: [],
+    candidatePool,
+    workspaceStore: store,
+    provider
+  });
+  const second = await buildSymbolPreprocessCache({
+    editorText: sourceCode,
+    languageId: "typescript",
+    filePath: "D:/workspace/src/example.ts",
+    relativeFilePath: "src/example.ts",
+    settings: secondSettings,
+    glossaryEntries: [],
+    candidatePool,
+    workspaceStore: store,
+    provider
+  });
+
+  assert.equal(preprocessCallCount, 2);
+  assert.equal(first?.cacheFile.builderVersion, PREPROCESS_BUILDER_VERSION);
+  assert.equal(
+    second?.cacheFile.buildFingerprint,
+    createPreprocessBuildFingerprint(secondSettings)
+  );
+  assert.notEqual(first?.cacheFile.buildFingerprint, second?.cacheFile.buildFingerprint);
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
+});
+
 test("symbol preprocess builder writes batch results into file cache", async () => {
   const workspaceRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "rcic-symbol-preprocess-")
@@ -379,13 +925,18 @@ test("symbol preprocess builder writes batch results into file cache", async () 
       providerTopP: 1,
       providerMaxTokens: 1200,
       providerReasoningEffort: "medium",
+      providerRequireTrustedWorkspace: true,
       detailLevel: "balanced",
       professionalLevel: "intermediate",
       occupation: "developer",
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessMode: "manual",
+      preprocessExclude: [],
+      preprocessMaxFileBytes: 262_144,
+      preprocessMaxCandidates: 120
     },
     glossaryEntries,
     workspaceStore: store,
@@ -496,13 +1047,18 @@ test("symbol preprocess builder processes wordbook entries in chunks", async () 
       providerTopP: 1,
       providerMaxTokens: 1200,
       providerReasoningEffort: "medium",
+      providerRequireTrustedWorkspace: true,
       detailLevel: "balanced",
       professionalLevel: "beginner",
       occupation: "developer",
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessMode: "manual",
+      preprocessExclude: [],
+      preprocessMaxFileBytes: 262_144,
+      preprocessMaxCandidates: 120
     },
     glossaryEntries,
     candidatePool,
@@ -617,13 +1173,18 @@ test("symbol preprocess builder falls back per chunk when a remote batch fails",
       providerTopP: 1,
       providerMaxTokens: 1200,
       providerReasoningEffort: "medium",
+      providerRequireTrustedWorkspace: true,
       detailLevel: "balanced",
       professionalLevel: "beginner",
       occupation: "developer",
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessMode: "manual",
+      preprocessExclude: [],
+      preprocessMaxFileBytes: 262_144,
+      preprocessMaxCandidates: 120
     },
     glossaryEntries,
     candidatePool,
@@ -747,13 +1308,18 @@ test("symbol preprocess builder ignores placeholder cache entries", async () => 
       providerTopP: 1,
       providerMaxTokens: 1200,
       providerReasoningEffort: "medium",
+      providerRequireTrustedWorkspace: true,
       detailLevel: "balanced",
       professionalLevel: "beginner",
       occupation: "developer",
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessMode: "manual",
+      preprocessExclude: [],
+      preprocessMaxFileBytes: 262_144,
+      preprocessMaxCandidates: 120
     },
     glossaryEntries,
     workspaceStore: store,
@@ -882,6 +1448,15 @@ test("token explain prompt includes selection preview and glossary hints", () =>
     selectedText: "squeeze",
     selectionPreview: "y = x.[[squeeze]](0)",
     granularity: "token",
+    selectionInsight: {
+      term: "squeeze",
+      kind: "function",
+      origin: "library",
+      qualifiedName: "torch.Tensor.squeeze",
+      signature: "squeeze(dim=None) -> Tensor",
+      documentation: "Returns a tensor with dimensions of size one removed.",
+      documentationSource: "language-service"
+    },
     detailLevel: "balanced",
     occupation: "data-scientist",
     professionalLevel: "intermediate",
@@ -910,7 +1485,137 @@ test("token explain prompt includes selection preview and glossary hints", () =>
   assert.match(prompts.user, /y = x\.\[\[squeeze\]\]\(0\)/);
   assert.match(prompts.user, /Glossary hints:/);
   assert.match(prompts.system, /concrete API usage/i);
+  assert.match(prompts.system, /callable logic/i);
+  assert.match(prompts.system, /primary factual source/i);
+  assert.match(prompts.user, /torch\.Tensor\.squeeze/);
   assert.match(prompts.system, /tensor, feature, shape, pipeline/i);
+});
+
+test("token knowledge cache isolates qualified APIs and local callsites", async () => {
+  const workspaceRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rcic-token-identity-")
+  );
+  const store = new WorkspaceStore(workspaceRoot);
+  await store.ensureProjectDataDirectories();
+  const tokenStore = new TokenKnowledgeStore(store);
+  const buildResponse = (requestId: string, summary: string) => ({
+    requestId,
+    title: requestId,
+    summary,
+    sections: [],
+    suggestedQuestions: [],
+    glossaryHints: [],
+    granularity: "token" as const,
+    selectionText: "asarray",
+    source: "openai-compatible",
+    latencyMs: 1,
+    knowledgeUsed: []
+  });
+  const numpyIdentity = {
+    term: "asarray",
+    qualifiedName: "numpy.asarray",
+    origin: "library" as const
+  };
+  const cupyIdentity = {
+    term: "asarray",
+    qualifiedName: "cupy.asarray",
+    origin: "library" as const
+  };
+
+  await tokenStore.upsert("python", numpyIdentity, buildResponse("numpy", "NumPy array"));
+
+  assert.equal((await tokenStore.find("python", numpyIdentity))?.explanation.summary, "NumPy array");
+  assert.equal(await tokenStore.find("python", cupyIdentity), undefined);
+  assert.notEqual(
+    createTokenKnowledgeCacheKey(numpyIdentity),
+    createTokenKnowledgeCacheKey(cupyIdentity)
+  );
+
+  await tokenStore.upsert(
+    "python",
+    { term: "result", origin: "local", contextHash: "scope-a" },
+    buildResponse("local-a", "First local result")
+  );
+  assert.equal(
+    await tokenStore.find("python", {
+      term: "result",
+      origin: "local",
+      contextHash: "scope-b"
+    }),
+    undefined
+  );
+  await fs.rm(workspaceRoot, { recursive: true, force: true });
+});
+
+test("variable explanations use data-flow guidance instead of function guidance", async () => {
+  const request: ExplanationRequest = {
+    requestId: "variable-prompt",
+    reason: "manual",
+    languageId: "python",
+    filePath: "D:/workspace/model.py",
+    relativeFilePath: "model.py",
+    selectedText: "feature_map",
+    selectionPreview: "[[feature_map]] = encoder(inputs)",
+    granularity: "token",
+    selectionInsight: {
+      term: "feature_map",
+      kind: "variable",
+      origin: "local",
+      documentation: "Variable that stores the encoded feature map.",
+      documentationSource: "glossary"
+    },
+    detailLevel: "balanced",
+    occupation: "data-scientist",
+    professionalLevel: "intermediate",
+    sections: ["summary", "inputOutput", "risk"],
+    userGoal: "Understand feature flow",
+    customInstructions: "",
+    contextBefore: "inputs = batch.images",
+    contextAfter: "scores = head(feature_map)",
+    glossaryEntries: [],
+    knowledgeSnippets: []
+  };
+  const prompts = buildExplainPrompts(request);
+  const response = await new LocalExplanationProvider().explain(request);
+
+  assert.match(prompts.system, /Treat the selection as data/i);
+  assert.match(prompts.system, /where the value comes from/i);
+  assert.doesNotMatch(prompts.system, /Treat the selection as callable logic/i);
+  assert.equal(response.title, "变量：feature_map");
+  assert.match(response.summary, /赋值来源/);
+  assert.match(
+    response.sections.find((section) => section.label === "risk")?.content ?? "",
+    /空值|形状|修改/
+  );
+});
+
+test("explanation panel avoids dynamic innerHTML and exposes stable interaction controls", async () => {
+  const panelSource = await fs.readFile(
+    path.join(process.cwd(), "src", "ui", "explanationPanel.ts"),
+    "utf8"
+  );
+
+  assert.doesNotMatch(panelSource, /\.innerHTML\s*=/);
+  assert.match(panelSource, /toggleSelectionWatch/);
+  assert.match(panelSource, /sendButton\.disabled/);
+  assert.match(panelSource, /questionInput\.disabled = Boolean\(payload\.isLoading \|\| !explanation\)/);
+  assert.match(panelSource, /sendButton\.disabled = true/);
+  assert.match(panelSource, /aria-selected/);
+  assert.match(panelSource, /replaceChildren/);
+});
+
+test("settings panel exposes remote trust and preprocess cost controls", async () => {
+  const settingsPanelSource = await fs.readFile(
+    path.join(process.cwd(), "src", "ui", "settingsPanel.ts"),
+    "utf8"
+  );
+
+  assert.match(settingsPanelSource, /providerRequireTrustedWorkspace/);
+  assert.match(settingsPanelSource, /preprocessMode/);
+  assert.match(settingsPanelSource, /preprocessExclude/);
+  assert.match(settingsPanelSource, /preprocessMaxFileBytes/);
+  assert.match(settingsPanelSource, /preprocessMaxCandidates/);
+  assert.doesNotMatch(settingsPanelSource, /\.innerHTML\s*=/);
 });
 
 test("local prompt generator keeps dictionary-style guidance", async () => {
@@ -985,13 +1690,18 @@ test("openai provider normalizes preprocess candidate selections", async () => {
       providerTopP: 1,
       providerMaxTokens: 1200,
       providerReasoningEffort: "medium",
+      providerRequireTrustedWorkspace: true,
       detailLevel: "balanced",
       professionalLevel: "intermediate",
       occupation: "developer",
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessMode: "manual",
+      preprocessExclude: [],
+      preprocessMaxFileBytes: 262_144,
+      preprocessMaxCandidates: 120
     });
     const candidatePool = buildPreprocessCandidatePool(glossaryEntries);
     const response = await provider.selectPreprocessCandidates!({
@@ -1091,13 +1801,18 @@ test("openai provider fails over to fallback endpoint", async () => {
       providerTopP: 1,
       providerMaxTokens: 1200,
       providerReasoningEffort: "medium",
+      providerRequireTrustedWorkspace: true,
       detailLevel: "balanced",
       professionalLevel: "intermediate",
       occupation: "developer",
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessMode: "manual",
+      preprocessExclude: [],
+      preprocessMaxFileBytes: 262_144,
+      preprocessMaxCandidates: 120
     });
     const response = await provider.explain({
       requestId: "remote-fallback",
@@ -1179,13 +1894,18 @@ test("openai provider normalizes section items from remote json", async () => {
       providerTopP: 1,
       providerMaxTokens: 1200,
       providerReasoningEffort: "medium",
+      providerRequireTrustedWorkspace: true,
       detailLevel: "balanced",
       professionalLevel: "intermediate",
       occupation: "developer",
       sections: ["summary", "usage"],
       userGoal: "",
       knowledgeTopK: 3,
-      customInstructions: ""
+      customInstructions: "",
+      preprocessMode: "manual",
+      preprocessExclude: [],
+      preprocessMaxFileBytes: 262_144,
+      preprocessMaxCandidates: 120
     });
     const response = await provider.explain({
       requestId: "remote-json",

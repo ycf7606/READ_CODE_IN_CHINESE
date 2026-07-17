@@ -17,6 +17,10 @@ import {
   rankPreprocessCandidatesForAudience,
   selectPreprocessCandidatesFromPool
 } from "../analysis/preprocess";
+import {
+  buildPreprocessSourceContext,
+  createCandidateContextHash
+} from "../analysis/symbolContext";
 import { ExtensionLogger } from "../logging/logger";
 import { generatePreprocessAudiencePrompt } from "../prompts/globalPromptProfile";
 import { LocalExplanationProvider } from "../providers/localProvider";
@@ -24,8 +28,14 @@ import { ExplanationProvider } from "../providers/providerTypes";
 import { WorkspaceStore } from "../storage/workspaceStore";
 import { createContentHash } from "../utils/hash";
 import { PreprocessStore } from "./preprocessStore";
+import {
+  createPreprocessBuildFingerprint,
+  isPreprocessCacheCompatible,
+  PREPROCESS_BUILDER_VERSION
+} from "./preprocessFingerprint";
 
 const PREPROCESS_CHUNK_SIZE = 20;
+const REMOTE_SELECTION_MINIMUM_CANDIDATES = 24;
 
 export interface BuildSymbolPreprocessOptions {
   editorText: string;
@@ -56,11 +66,11 @@ export function buildCachedPreprocessExplanation(
 ): ExplanationResponse {
   return {
     requestId: request.requestId,
-    title: `${entry.term} Quick Meaning`,
+    title: `${toCategoryLabel(entry.category)}：${entry.term}`,
     summary: entry.summary,
     sections: [
       {
-        label: "summary",
+        label: toExplanationLabel(entry.category),
         content: entry.summary,
         items: [entry.summary]
       }
@@ -90,6 +100,7 @@ export async function buildSymbolPreprocessCache(
 
   const preprocessStore = new PreprocessStore(options.workspaceStore);
   const sourceHash = createContentHash(options.editorText);
+  const buildFingerprint = createPreprocessBuildFingerprint(options.settings);
   const candidatePool =
     options.candidatePool ?? buildPreprocessCandidatePool(options.glossaryEntries);
 
@@ -111,26 +122,34 @@ export async function buildSymbolPreprocessCache(
   const selectedCandidateTerms = new Set(
     selectedCandidates.map((candidate) => candidate.normalizedTerm)
   );
+  const selectedCandidateMap = new Map(
+    selectedCandidates.map((candidate) => [candidate.normalizedTerm, candidate])
+  );
   const cachedEntries =
-    existingCache && existingCache.sourceHash === sourceHash
-      ? existingCache.entries.filter(
-          (entry) =>
-            selectedCandidateTerms.has(entry.normalizedTerm) &&
-            !isPlaceholderPreprocessEntry(entry)
-        )
-      : [];
+    existingCache && isPreprocessCacheCompatible(existingCache, buildFingerprint)
+    ? existingCache.entries.filter((entry) => {
+        const candidate = selectedCandidateMap.get(entry.normalizedTerm);
+
+        if (!candidate || !selectedCandidateTerms.has(entry.normalizedTerm)) {
+          return false;
+        }
+
+        if (isPlaceholderPreprocessEntry(entry)) {
+          return false;
+        }
+
+        return (
+          existingCache.sourceHash === sourceHash ||
+          entry.contextHash === createCandidateContextHash(options.editorText, candidate)
+        );
+      })
+    : [];
   const missingCandidates = selectedCandidates.filter(
     (candidate) => !cachedEntries.some((entry) => entry.normalizedTerm === candidate.normalizedTerm)
   );
 
   if (selectedCandidates.length === 0) {
-    const emptyCache: PreprocessedSymbolCacheFile = {
-      languageId: options.languageId,
-      relativeFilePath: options.relativeFilePath,
-      sourceHash,
-      generatedAt: new Date().toISOString(),
-      entries: []
-    };
+    const emptyCache = buildCacheFile(options, sourceHash, []);
     await preprocessStore.write(options.relativeFilePath, emptyCache);
     options.onCacheUpdate?.(emptyCache);
     options.onProgress?.(
@@ -222,7 +241,7 @@ export async function buildSymbolPreprocessCache(
       )
     );
 
-    const chunkRequest = buildChunkRequest(options, nextChunk, sourceHash);
+    const chunkRequest = buildChunkRequest(options, nextChunk);
     let response;
 
     try {
@@ -250,7 +269,11 @@ export async function buildSymbolPreprocessCache(
     }
     responseSource = mergeResponseSourceLabel(responseSource, response.source);
 
-    const normalizedChunkEntries = normalizePreprocessEntries(nextChunk, response.entries);
+    const normalizedChunkEntries = normalizePreprocessEntries(
+      nextChunk,
+      response.entries,
+      options.editorText
+    );
 
     for (const entry of normalizedChunkEntries) {
       mergedEntries.set(entry.normalizedTerm, entry);
@@ -291,7 +314,11 @@ export async function buildSymbolPreprocessCache(
     options,
     sourceHash,
     sortPreprocessEntries(
-      normalizePreprocessEntries(selectedCandidates, Array.from(mergedEntries.values())),
+      normalizePreprocessEntries(
+        selectedCandidates,
+        Array.from(mergedEntries.values()),
+        options.editorText
+      ),
       selectedCandidates
     )
   );
@@ -381,7 +408,10 @@ async function selectCandidatesForPreprocess(
     })
   );
 
-  if (options.provider.selectPreprocessCandidates) {
+  if (
+    options.provider.selectPreprocessCandidates &&
+    candidatePool.length >= REMOTE_SELECTION_MINIMUM_CANDIDATES
+  ) {
     try {
       const request = buildSelectionRequest(
         options,
@@ -465,7 +495,10 @@ async function selectCandidatesForPreprocess(
         batchCount: 0,
         processedBatches: 0,
         currentStep: "Selecting wordbook terms",
-        message: `Used local fallback to select ${fallbackCandidates.length} wordbook terms from ${candidatePool.length} candidates.`
+        message:
+          candidatePool.length < REMOTE_SELECTION_MINIMUM_CANDIDATES
+            ? `Used fast local ranking for ${fallbackCandidates.length} terms; the candidate pool is too small to justify a separate remote selection call.`
+            : `Used local fallback to select ${fallbackCandidates.length} wordbook terms from ${candidatePool.length} candidates.`
       }
     )
   );
@@ -497,7 +530,7 @@ function buildSelectionRequest(
     relativeFilePath: options.relativeFilePath,
     professionalLevel: options.settings.professionalLevel,
     occupation: options.settings.occupation,
-    sourceCode: options.editorText,
+    sourceCode: buildPreprocessSourceContext(options.editorText, candidatePool, 24_000),
     candidatePool,
     targetSelectionCount,
     retentionRatio: getPreprocessRetentionRatio(options.settings.professionalLevel),
@@ -513,8 +546,7 @@ function buildSelectionRequest(
 
 function buildChunkRequest(
   options: BuildSymbolPreprocessOptions,
-  candidates: PreprocessedSymbolCandidate[],
-  sourceHash: string
+  candidates: PreprocessedSymbolCandidate[]
 ): SymbolPreprocessRequest {
   return {
     requestId: createContentHash(
@@ -522,7 +554,7 @@ function buildChunkRequest(
         "symbol-preprocess",
         options.languageId,
         options.relativeFilePath,
-        sourceHash,
+        createContentHash(buildPreprocessSourceContext(options.editorText, candidates)),
         candidates.map((candidate) => candidate.term).join(",")
       ].join(":")
     ),
@@ -531,7 +563,7 @@ function buildChunkRequest(
     relativeFilePath: options.relativeFilePath,
     professionalLevel: options.settings.professionalLevel,
     occupation: options.settings.occupation,
-    sourceCode: options.editorText,
+    sourceCode: buildPreprocessSourceContext(options.editorText, candidates),
     candidates,
     userGoal: options.settings.userGoal,
     customInstructions: generatePreprocessAudiencePrompt({
@@ -598,6 +630,8 @@ function buildCacheFile(
   entries: PreprocessedSymbolEntry[]
 ): PreprocessedSymbolCacheFile {
   return {
+    builderVersion: PREPROCESS_BUILDER_VERSION,
+    buildFingerprint: createPreprocessBuildFingerprint(options.settings),
     languageId: options.languageId,
     relativeFilePath: options.relativeFilePath,
     sourceHash,
@@ -608,7 +642,8 @@ function buildCacheFile(
 
 function normalizePreprocessEntries(
   candidates: PreprocessedSymbolCandidate[],
-  entries: PreprocessedSymbolEntry[]
+  entries: PreprocessedSymbolEntry[],
+  sourceCode: string
 ): PreprocessedSymbolEntry[] {
   const entryMap = new Map(entries.map((entry) => [entry.normalizedTerm, entry]));
   const normalizedEntries: PreprocessedSymbolEntry[] = [];
@@ -622,6 +657,7 @@ function normalizePreprocessEntries(
 
     normalizedEntries.push({
       ...matchedEntry,
+      contextHash: createCandidateContextHash(sourceCode, candidate),
       isPlaceholder: false
     });
   }
@@ -657,6 +693,21 @@ function toCategoryLabel(category: PreprocessedSymbolCandidate["category"]): str
       return "标签名";
     default:
       return "变量";
+  }
+}
+
+function toExplanationLabel(category: PreprocessedSymbolCandidate["category"]): string {
+  switch (category) {
+    case "function":
+      return "函数职责";
+    case "class":
+      return "类职责";
+    case "type":
+      return "类型含义";
+    case "label":
+      return "标签含义";
+    default:
+      return "变量含义";
   }
 }
 

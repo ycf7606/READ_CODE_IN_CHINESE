@@ -227,6 +227,54 @@
           "default": "medium",
           "description": "Reasoning effort level supported by the configured endpoint."
         },
+        "readCodeInChinese.provider.requireTrustedWorkspace": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use the remote provider only when the current workspace is trusted."
+        },
+        "readCodeInChinese.preprocess.mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "manual",
+            "onSave",
+            "idle"
+          ],
+          "default": "manual",
+          "description": "Controls when file symbol preprocessing may send bounded source context to the remote provider."
+        },
+        "readCodeInChinese.preprocess.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/.env*",
+            "**/*.pem",
+            "**/*.key",
+            "**/secrets.*",
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/.git/**",
+            "**/*.min.js",
+            "**/*.map"
+          ],
+          "description": "Glob patterns excluded from remote file preprocessing."
+        },
+        "readCodeInChinese.preprocess.maxFileBytes": {
+          "type": "number",
+          "default": 262144,
+          "minimum": 1024,
+          "description": "Maximum UTF-8 file size allowed for remote preprocessing."
+        },
+        "readCodeInChinese.preprocess.maxCandidates": {
+          "type": "number",
+          "default": 120,
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Maximum number of file symbols considered by one preprocess run."
+        },
         "readCodeInChinese.explanation.detailLevel": {
           "type": "string",
           "enum": [
@@ -301,11 +349,14 @@
     "watch": "tsc -watch -p ./",
     "check": "tsc --noEmit -p ./",
     "test": "npm run compile && node --test dist/test/index.test.js",
+    "test:extension": "npm run compile && node dist/test/runExtensionTests.js",
+    "test:all": "npm test && npm run test:extension",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
     "@types/node": "^20.17.24",
     "@types/vscode": "^1.89.0",
+    "@vscode/test-electron": "^2.5.2",
     "typescript": "^5.6.3"
   }
 }

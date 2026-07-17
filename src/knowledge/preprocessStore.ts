@@ -3,6 +3,7 @@ import {
   PreprocessedSymbolEntry
 } from "../contracts";
 import { WorkspaceStore } from "../storage/workspaceStore";
+import { isPreprocessCacheCompatible } from "./preprocessFingerprint";
 
 export class PreprocessStore {
   constructor(private readonly workspaceStore: WorkspaceStore) {}
@@ -21,11 +22,16 @@ export class PreprocessStore {
   async findEntry(
     relativeFilePath: string,
     sourceHash: string,
-    term: string
+    term: string,
+    expectedFingerprint?: string
   ): Promise<PreprocessedSymbolEntry | undefined> {
     const cacheFile = await this.read(relativeFilePath);
 
-    if (!cacheFile || cacheFile.sourceHash !== sourceHash) {
+    if (
+      !cacheFile ||
+      cacheFile.sourceHash !== sourceHash ||
+      (expectedFingerprint && !isPreprocessCacheCompatible(cacheFile, expectedFingerprint))
+    ) {
       return undefined;
     }
 

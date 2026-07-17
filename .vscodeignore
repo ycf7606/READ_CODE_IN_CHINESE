@@ -4,3 +4,5 @@ src/**
 tsconfig.json
 node_modules/**
 **/*.ts
+dist/test/**
+.vscode-test/**

@@ -2,6 +2,12 @@ import { promises as fs } from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { buildPreprocessCandidatePool } from "./analysis/preprocess";
+import {
+  evaluatePreprocessPolicy,
+  isPreprocessTriggerEnabled,
+  PreprocessTrigger
+} from "./analysis/preprocessPolicy";
+import { attachSelectionDocumentation } from "./analysis/explanationPostprocess";
 import { extractGlossaryEntries, mergeGlossaryWithUserOverrides } from "./analysis/glossary";
 import { attachWordbookScopePaths } from "./analysis/wordbook";
 import {
@@ -28,19 +34,28 @@ import { syncOfficialDocsForLanguage } from "./knowledge/officialDocs";
 import { KnowledgeStore } from "./knowledge/knowledgeStore";
 import { PreprocessStore } from "./knowledge/preprocessStore";
 import {
+  createPreprocessBuildFingerprint,
+  isPreprocessCacheCompatible
+} from "./knowledge/preprocessFingerprint";
+import {
   buildCachedPreprocessExplanation,
   buildSymbolPreprocessCache
 } from "./knowledge/symbolPreprocessBuilder";
-import { TokenKnowledgeStore } from "./knowledge/tokenKnowledgeStore";
+import {
+  TokenKnowledgeIdentity,
+  TokenKnowledgeStore
+} from "./knowledge/tokenKnowledgeStore";
 import { ExtensionLogger } from "./logging/logger";
 import { generateGlobalPrompt } from "./prompts/globalPromptProfile";
 import { createProvider } from "./providers/createProvider";
 import { ExplanationProvider } from "./providers/providerTypes";
+import { SourceEditorSessionController } from "./runtime/sourceEditorSession";
 import { WorkspaceStore } from "./storage/workspaceStore";
 import { ExplanationPanel } from "./ui/explanationPanel";
 import { GlossaryTreeProvider } from "./ui/glossaryTreeProvider";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { createContentHash } from "./utils/hash";
+import { inspectEditorSelection } from "./vscode/selectionInspector";
 
 interface SessionState {
   request?: ExplanationRequest;
@@ -53,11 +68,6 @@ interface SessionState {
   wordbookSourceHash?: string;
   currentGranularity?: ExplanationGranularity;
   preprocessProgress?: PreprocessProgress;
-}
-
-interface ActiveTaskState {
-  version: number;
-  controller: AbortController;
 }
 
 interface ExplainSelectionOptions {
@@ -83,15 +93,9 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   let autoExplainTimeout: NodeJS.Timeout | undefined;
   let preprocessTimeout: NodeJS.Timeout | undefined;
-  let trackedSourceEditor: vscode.TextEditor | undefined = vscode.window.activeTextEditor;
-  let lastAutoExplainSignature = "";
-  let explainTaskVersion = 0;
-  let followUpTaskVersion = 0;
-  let preprocessTaskVersion = 0;
-  let activeExplainTask: ActiveTaskState | undefined;
-  let activeFollowUpTask: ActiveTaskState | undefined;
-  let activePreprocessTask: ActiveTaskState | undefined;
-  const recentSelectionLinesByFile = new Map<string, number[]>();
+  const sourceEditorSession = new SourceEditorSessionController<vscode.TextEditor>(
+    vscode.window.activeTextEditor
+  );
 
   const panel = new ExplanationPanel(async (message) => {
     if (message.type === "ready") {
@@ -102,6 +106,42 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (message.type === "openSettings") {
       settingsPanel.show(getSettings());
+      return;
+    }
+
+    if (message.type === "explainCurrentSelection") {
+      await explainSelection("manual", {
+        showProgress: false,
+        showWarnings: true,
+        revealPanel: false
+      });
+      return;
+    }
+
+    if (message.type === "toggleSelectionWatch") {
+      panel.setWatchingSelection(message.enabled);
+      clearTimeout(autoExplainTimeout);
+
+      if (!message.enabled) {
+        const canceledExplanation = cancelExplainTask("Selection watching paused");
+        if (canceledExplanation) {
+          panel.setState({
+            isLoading: false,
+            statusMessage: "已暂停跟随选区，当前请求已取消。"
+          });
+        }
+        syncPanelContext(getPreferredSourceEditor());
+        return;
+      }
+
+      syncPanelContext(getPreferredSourceEditor());
+      if (hasNonEmptySelection(getPreferredSourceEditor())) {
+        await explainSelection("auto", {
+          showProgress: false,
+          showWarnings: false,
+          revealPanel: false
+        });
+      }
       return;
     }
 
@@ -140,6 +180,7 @@ export function activate(context: vscode.ExtensionContext): void {
           currentSettings.providerTimeoutMs,
           { minimum: 1000 }
         ),
+        providerRequireTrustedWorkspace: message.payload.providerRequireTrustedWorkspace,
         providerTemperature: sanitizeNumber(
           message.payload.temperature,
           currentSettings.providerTemperature,
@@ -171,7 +212,7 @@ export function activate(context: vscode.ExtensionContext): void {
       settingsPanel.setStatusMessage("Generating prompt profile...");
 
       try {
-        const provider = createProvider(providerSettings, logger);
+        const provider = createWorkspaceAwareProvider(providerSettings, logger);
         const response = await runPromptProfileWithFallback(provider, promptRequest, logger);
 
         settingsPanel.setDraftGlobalPrompt(response.prompt);
@@ -213,6 +254,13 @@ export function activate(context: vscode.ExtensionContext): void {
     panel,
     settingsPanel,
     statusBarItem,
+    {
+      dispose: () => {
+        clearTimeout(autoExplainTimeout);
+        clearTimeout(preprocessTimeout);
+        sourceEditorSession.dispose();
+      }
+    },
     vscode.window.registerTreeDataProvider(ACTIVE_GLOSSARY_VIEW, glossaryTreeProvider)
   );
 
@@ -319,7 +367,8 @@ export function activate(context: vscode.ExtensionContext): void {
         cancelPreprocessTask("Configuration changed");
         updateStatusBar(statusBarItem);
         syncPanelContext(getPreferredSourceEditor());
-        schedulePreprocessForActiveEditor();
+        void refreshWordbookForActiveEditor();
+        schedulePreprocessForActiveEditor("idle");
       }
     }),
     vscode.window.onDidChangeActiveTextEditor(async (editor) => {
@@ -328,10 +377,21 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      trackedSourceEditor = editor;
-      cancelExplainTask("Active editor changed");
-      cancelFollowUpTask("Active editor changed");
+      const relativeFilePath = getRelativeFilePath(editor);
+      const switchedExplanationFile = Boolean(
+        sessionState.request && sessionState.request.relativeFilePath !== relativeFilePath
+      );
+      sourceEditorSession.trackEditor(editor);
+      const canceledExplanation = cancelExplainTask("Active editor changed");
+      const canceledFollowUp = cancelFollowUpTask("Active editor changed");
       cancelPreprocessTask("Active editor changed");
+      if (switchedExplanationFile || canceledExplanation || canceledFollowUp) {
+        resetExplanationForSelectionChange(
+          switchedExplanationFile
+            ? "已切换文件，请选择代码后生成解释。"
+            : "编辑器状态已变化，请重新生成解释。"
+        );
+      }
       logger.info("Active editor changed", {
         filePath: editor?.document.uri.fsPath,
         languageId: editor?.document.languageId
@@ -339,34 +399,64 @@ export function activate(context: vscode.ExtensionContext): void {
       syncPanelContext(editor);
       await refreshGlossaryForActiveEditor(false);
       await refreshWordbookForEditor(editor);
-      schedulePreprocessForActiveEditor();
+      schedulePreprocessForActiveEditor("idle");
+    }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.contentChanges.length === 0) {
+        return;
+      }
+
+      const editor = getPreferredSourceEditor();
+
+      if (!editor || editor.document.uri.toString() !== event.document.uri.toString()) {
+        return;
+      }
+
+      clearTimeout(autoExplainTimeout);
+      clearTimeout(preprocessTimeout);
+      sourceEditorSession.resetAutoExplainSignature();
+      const canceledExplanation = cancelExplainTask("Active document changed");
+      const canceledFollowUp = cancelFollowUpTask("Active document changed");
+      cancelPreprocessTask("Active document changed");
+
+      if (
+        canceledExplanation ||
+        canceledFollowUp ||
+        sessionState.request?.relativeFilePath === getRelativeFilePath(editor)
+      ) {
+        resetExplanationForSelectionChange("文件内容已变化，请重新生成解释。");
+      }
+
+      syncPanelContext(editor);
+      schedulePreprocessForActiveEditor("idle");
     }),
     vscode.workspace.onDidSaveTextDocument(async (document) => {
       if (vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString()) {
         logger.info("Active document saved", {
           filePath: document.uri.fsPath
         });
-        cancelExplainTask("Active document saved");
-        cancelFollowUpTask("Active document saved");
+        const canceledExplanation = cancelExplainTask("Active document saved");
+        const canceledFollowUp = cancelFollowUpTask("Active document saved");
         cancelPreprocessTask("Active document saved");
+        if (canceledExplanation || canceledFollowUp) {
+          resetExplanationForSelectionChange("文件已保存，请重新生成解释。");
+        }
         await refreshGlossaryForActiveEditor(false);
         await refreshWordbookForActiveEditor();
-        schedulePreprocessForActiveEditor();
+        schedulePreprocessForActiveEditor("save");
       }
     }),
     vscode.window.onDidChangeTextEditorSelection(async (event) => {
-      trackedSourceEditor = event.textEditor;
-      syncPanelContext(event.textEditor);
+      sourceEditorSession.trackEditor(event.textEditor);
       recordSelectionFocus(event.textEditor, event.textEditor.selection);
+      clearTimeout(autoExplainTimeout);
 
       if (!event.textEditor.selection || event.textEditor.selection.isEmpty) {
-        return;
-      }
-
-      const shouldWatchSelection =
-        getSettings().autoExplainEnabled || panel.isWatchingSelection();
-
-      if (!shouldWatchSelection) {
+        sourceEditorSession.resetAutoExplainSignature();
+        cancelExplainTask("Selection cleared");
+        cancelFollowUpTask("Selection cleared");
+        resetExplanationForSelectionChange("请选择代码后再生成解释。");
+        syncPanelContext(event.textEditor);
         return;
       }
 
@@ -375,6 +465,11 @@ export function activate(context: vscode.ExtensionContext): void {
         .trim();
 
       if (!currentSelectionText) {
+        sourceEditorSession.resetAutoExplainSignature();
+        cancelExplainTask("Selection contains no code");
+        cancelFollowUpTask("Selection contains no code");
+        resetExplanationForSelectionChange("当前选区没有可解释的代码。");
+        syncPanelContext(event.textEditor);
         return;
       }
 
@@ -387,12 +482,26 @@ export function activate(context: vscode.ExtensionContext): void {
         createContentHash(currentSelectionText)
       ].join(":");
 
-      if (signature === lastAutoExplainSignature) {
+      if (!sourceEditorSession.acceptAutoExplainSignature(signature)) {
+        syncPanelContext(event.textEditor);
         return;
       }
 
-      lastAutoExplainSignature = signature;
-      clearTimeout(autoExplainTimeout);
+      cancelExplainTask("Selection changed");
+      cancelFollowUpTask("Selection changed");
+      const shouldWatchSelection =
+        panel.isWatchingSelection() ||
+        (getSettings().autoExplainEnabled && !panel.isOpen());
+      resetExplanationForSelectionChange(
+        shouldWatchSelection ? "等待选区稳定后生成解释…" : "选区已变化，请手动生成解释。",
+        shouldWatchSelection
+      );
+      syncPanelContext(event.textEditor);
+
+      if (!shouldWatchSelection) {
+        return;
+      }
+
       autoExplainTimeout = setTimeout(() => {
         void explainSelection("auto", {
           showProgress: false,
@@ -407,7 +516,7 @@ export function activate(context: vscode.ExtensionContext): void {
   syncPanelContext(getPreferredSourceEditor());
   void refreshGlossaryForActiveEditor(false);
   void refreshWordbookForActiveEditor();
-  schedulePreprocessForActiveEditor();
+  schedulePreprocessForActiveEditor("idle");
   if (!context.globalState.get<boolean>("readCodeInChinese.onboardingShown")) {
     void context.globalState.update("readCodeInChinese.onboardingShown", true);
     setTimeout(() => {
@@ -415,64 +524,15 @@ export function activate(context: vscode.ExtensionContext): void {
     }, 250);
   }
 
-  function startTask(
-    kind: "explain" | "follow-up" | "preprocess"
-  ): { version: number; controller: AbortController } {
-    const controller = new AbortController();
-
-    if (kind === "explain") {
-      activeExplainTask?.controller.abort();
-      explainTaskVersion += 1;
-      activeExplainTask = {
-        version: explainTaskVersion,
-        controller
-      };
-      return activeExplainTask;
-    }
-
-    if (kind === "follow-up") {
-      activeFollowUpTask?.controller.abort();
-      followUpTaskVersion += 1;
-      activeFollowUpTask = {
-        version: followUpTaskVersion,
-        controller
-      };
-      return activeFollowUpTask;
-    }
-
-    activePreprocessTask?.controller.abort();
-    preprocessTaskVersion += 1;
-    activePreprocessTask = {
-      version: preprocessTaskVersion,
-      controller
-    };
-    return activePreprocessTask;
-  }
-
-  function isTaskCurrent(
-    kind: "explain" | "follow-up" | "preprocess",
-    version: number
-  ): boolean {
-    if (kind === "explain") {
-      return activeExplainTask?.version === version;
-    }
-
-    if (kind === "follow-up") {
-      return activeFollowUpTask?.version === version;
-    }
-
-    return activePreprocessTask?.version === version;
-  }
-
   function cancelPreprocessTask(reason: string): void {
     clearTimeout(preprocessTimeout);
-    if (activePreprocessTask) {
+    const task = sourceEditorSession.cancelTask("preprocess");
+
+    if (task) {
       const relativeFilePath =
         sessionState.preprocessProgress?.relativeFilePath ??
         getRelativeFilePath(vscode.window.activeTextEditor);
-      logger.info("Canceled preprocess task", { reason, version: activePreprocessTask.version });
-      activePreprocessTask.controller.abort();
-      activePreprocessTask = undefined;
+      logger.info("Canceled preprocess task", { reason, version: task.version });
       sessionState.preprocessProgress = {
         ...(sessionState.preprocessProgress ?? {
           totalCandidates: 0,
@@ -496,28 +556,55 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
-  function cancelExplainTask(reason: string): void {
-    if (!activeExplainTask) {
-      return;
+  function cancelExplainTask(reason: string): boolean {
+    const task = sourceEditorSession.cancelTask("explain");
+
+    if (!task) {
+      return false;
     }
 
-    logger.info("Canceled explanation task", { reason, version: activeExplainTask.version });
-    activeExplainTask.controller.abort();
+    logger.info("Canceled explanation task", { reason, version: task.version });
+    return true;
   }
 
-  function cancelFollowUpTask(reason: string): void {
-    if (!activeFollowUpTask) {
-      return;
+  function cancelFollowUpTask(reason: string): boolean {
+    const task = sourceEditorSession.cancelTask("follow-up");
+
+    if (!task) {
+      return false;
     }
 
-    logger.info("Canceled follow-up task", { reason, version: activeFollowUpTask.version });
-    activeFollowUpTask.controller.abort();
+    logger.info("Canceled follow-up task", { reason, version: task.version });
+    return true;
   }
 
-  function schedulePreprocessForActiveEditor(): void {
+  function resetExplanationForSelectionChange(
+    statusMessage: string,
+    isLoading = false
+  ): void {
+    sessionState.request = undefined;
+    sessionState.explanation = undefined;
+    sessionState.chatHistory = [];
+    sessionState.currentGranularity = undefined;
+    panel.setState({
+      explanation: undefined,
+      chatHistory: [],
+      currentSelectionInsight: undefined,
+      isLoading,
+      statusMessage
+    });
+  }
+
+  function schedulePreprocessForActiveEditor(trigger: PreprocessTrigger): void {
     clearTimeout(preprocessTimeout);
+    const settings = getSettings();
+
+    if (!isPreprocessTriggerEnabled(settings, trigger)) {
+      return;
+    }
+
     preprocessTimeout = setTimeout(() => {
-      void runPreprocessForActiveEditor(false);
+      void runPreprocessForActiveEditor(false, trigger);
     }, PREPROCESS_DELAY_MS);
   }
 
@@ -535,7 +622,9 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    if (editor.selection.isEmpty) {
+    const selection = editor.selection;
+
+    if (selection.isEmpty) {
       await handleSelectionFailure(
         "Read Code In Chinese: select some code before requesting an explanation.",
         options
@@ -543,7 +632,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const selectedText = editor.document.getText(editor.selection).trim();
+    const selectedText = editor.document.getText(selection).trim();
 
     if (!selectedText) {
       await handleSelectionFailure(
@@ -553,10 +642,20 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    cancelFollowUpTask("New selection explanation started");
-    const task = startTask("explain");
+    if (cancelFollowUpTask("New selection explanation started")) {
+      sessionState.chatHistory = [];
+      panel.setState({ chatHistory: [] });
+    }
+    const task = sourceEditorSession.startTask("explain");
+    const isCurrentTask = (): boolean =>
+      sourceEditorSession.isTaskCurrent("explain", task.version) &&
+      !task.controller.signal.aborted;
 
     const execute = async (): Promise<void> => {
+      if (!isCurrentTask()) {
+        return;
+      }
+
       const projectContext = getProjectContext(editor.document, logger);
 
       if (!projectContext) {
@@ -569,9 +668,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
       const { relativeFilePath, workspaceStore, knowledgeStore } = projectContext;
       await workspaceStore.ensureProjectDataDirectories();
+
+      if (!isCurrentTask()) {
+        return;
+      }
+
       const granularity = inferGranularity(
         selectedText,
-        editor.selection.end.line - editor.selection.start.line + 1
+        selection.end.line - selection.start.line + 1
       );
       const sourceHash = createContentHash(editor.document.getText());
       const shouldRevealPanel =
@@ -584,7 +688,8 @@ export function activate(context: vscode.ExtensionContext): void {
       panel.setState({
         isWatchingSelection: panel.isWatchingSelection(),
         currentFile: relativeFilePath,
-        currentSelectionLabel: formatSelectionLabel(editor.selection),
+        currentSelectionLabel: formatSelectionLabel(selection),
+        hasSelection: true,
         currentGranularity: granularity,
         isLoading: true,
         reasoningEffort: getSettings().providerReasoningEffort,
@@ -602,7 +707,7 @@ export function activate(context: vscode.ExtensionContext): void {
         logger
       );
 
-      if (!isTaskCurrent("explain", task.version) || task.controller.signal.aborted) {
+      if (!isCurrentTask()) {
         return;
       }
 
@@ -618,15 +723,27 @@ export function activate(context: vscode.ExtensionContext): void {
         reason,
         glossaryEntries,
         knowledgeStore,
-        relativeFilePath
+        relativeFilePath,
+        selection
       );
+
+      if (!isCurrentTask()) {
+        return;
+      }
+
+      panel.setState({
+        currentSelectionInsight: request.selectionInsight
+      });
       let response: ExplanationResponse | undefined;
 
       if (granularity === "token") {
+        const settings = getSettings();
+        const tokenIdentity = createTokenKnowledgeIdentity(request);
         const preprocessedEntry = await preprocessStore.findEntry(
           relativeFilePath,
           sourceHash,
-          selectedText
+          selectedText,
+          createPreprocessBuildFingerprint(settings)
         );
 
         if (preprocessedEntry) {
@@ -638,7 +755,7 @@ export function activate(context: vscode.ExtensionContext): void {
         } else {
           const cachedToken = await tokenKnowledgeStore.find(
             editor.document.languageId,
-            selectedText
+            tokenIdentity
           );
 
           if (cachedToken) {
@@ -662,15 +779,25 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       if (!response) {
-        const provider = createProvider(getSettings(), logger);
+        const provider = createWorkspaceAwareProvider(getSettings(), logger);
         response = await runExplanationWithFallback(provider, request, logger, task.controller.signal);
-
-        if (granularity === "token" && response.source === "openai-compatible") {
-          await tokenKnowledgeStore.upsert(editor.document.languageId, selectedText, response);
-        }
       }
 
-      if (!isTaskCurrent("explain", task.version) || task.controller.signal.aborted) {
+      response = attachSelectionDocumentation(response, request);
+
+      if (!isCurrentTask()) {
+        return;
+      }
+
+      if (granularity === "token" && response.source === "openai-compatible") {
+        await tokenKnowledgeStore.upsert(
+          editor.document.languageId,
+          createTokenKnowledgeIdentity(request),
+          response
+        );
+      }
+
+      if (!isCurrentTask()) {
         logger.info("Dropped stale explanation result", {
           requestId: request.requestId,
           version: task.version
@@ -690,8 +817,10 @@ export function activate(context: vscode.ExtensionContext): void {
         workspaceIndex: sessionState.workspaceIndex,
         isWatchingSelection: panel.isWatchingSelection(),
         currentFile: relativeFilePath,
-        currentSelectionLabel: formatSelectionLabel(editor.selection),
+        currentSelectionLabel: formatSelectionLabel(selection),
+        hasSelection: true,
         currentGranularity: granularity,
+        currentSelectionInsight: request.selectionInsight,
         isLoading: false,
         reasoningEffort: getSettings().providerReasoningEffort,
         lastUpdatedAt: new Date().toLocaleString(),
@@ -712,15 +841,39 @@ export function activate(context: vscode.ExtensionContext): void {
         syncPanelContext(editor);
       }
 
-      schedulePreprocessForActiveEditor();
+      schedulePreprocessForActiveEditor("idle");
     };
 
     logger.info("Explanation requested", {
       reason,
       filePath: editor.document.uri.fsPath,
-      selection: formatSelectionLabel(editor.selection),
+      selection: formatSelectionLabel(selection),
       version: task.version
     });
+
+    const handleExplanationError = async (error: unknown): Promise<void> => {
+      if (!sourceEditorSession.isTaskCurrent("explain", task.version)) {
+        logger.info("Dropped stale explanation error", {
+          reason,
+          version: task.version
+        });
+        return;
+      }
+
+      logger.error("Selection explanation failed", error);
+      const message = `Explanation failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      panel.setState({
+        isLoading: false,
+        reasoningEffort: getSettings().providerReasoningEffort,
+        statusMessage: message
+      });
+
+      if (options.showWarnings) {
+        await vscode.window.showWarningMessage(`Read Code In Chinese: ${message}`);
+      }
+    };
 
     if (options.showProgress) {
       await vscode.window.withProgress(
@@ -738,7 +891,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 reason,
                 version: task.version
               });
-              if (isTaskCurrent("explain", task.version)) {
+              if (sourceEditorSession.isTaskCurrent("explain", task.version)) {
                 panel.setState({
                   isLoading: false,
                   reasoningEffort: getSettings().providerReasoningEffort,
@@ -748,11 +901,9 @@ export function activate(context: vscode.ExtensionContext): void {
               return;
             }
 
-            throw error;
+            await handleExplanationError(error);
           } finally {
-            if (isTaskCurrent("explain", task.version)) {
-              activeExplainTask = undefined;
-            }
+            sourceEditorSession.finishTask("explain", task.version);
           }
         }
       );
@@ -767,7 +918,7 @@ export function activate(context: vscode.ExtensionContext): void {
           reason,
           version: task.version
         });
-        if (isTaskCurrent("explain", task.version)) {
+        if (sourceEditorSession.isTaskCurrent("explain", task.version)) {
           panel.setState({
             isLoading: false,
             reasoningEffort: getSettings().providerReasoningEffort,
@@ -777,11 +928,9 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      throw error;
+      await handleExplanationError(error);
     } finally {
-      if (isTaskCurrent("explain", task.version)) {
-        activeExplainTask = undefined;
-      }
+      sourceEditorSession.finishTask("explain", task.version);
     }
   }
 
@@ -832,7 +981,7 @@ export function activate(context: vscode.ExtensionContext): void {
           knowledgeStore,
           relativeFilePath
         );
-        const provider = createProvider(getSettings(), logger);
+        const provider = createWorkspaceAwareProvider(getSettings(), logger);
         const response = await runExplanationWithFallback(provider, request, logger);
 
         sessionState.request = request;
@@ -846,7 +995,9 @@ export function activate(context: vscode.ExtensionContext): void {
           isWatchingSelection: panel.isWatchingSelection(),
           currentFile: relativeFilePath,
           currentSelectionLabel: "Entire file",
+          hasSelection: false,
           currentGranularity: "file",
+          currentSelectionInsight: undefined,
           isLoading: false,
           reasoningEffort: getSettings().providerReasoningEffort,
           lastUpdatedAt: new Date().toLocaleString(),
@@ -1163,8 +1314,8 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const task = startTask("follow-up");
-    const provider = createProvider(getSettings(), logger);
+    const task = sourceEditorSession.startTask("follow-up");
+    const provider = createWorkspaceAwareProvider(getSettings(), logger);
     const previousChatHistory = [...sessionState.chatHistory];
     const userTurn: ChatTurn = {
       role: "user",
@@ -1194,11 +1345,21 @@ export function activate(context: vscode.ExtensionContext): void {
         task.controller.signal
       );
     } catch (error) {
+      if (
+        !sourceEditorSession.isTaskCurrent("follow-up", task.version) ||
+        task.controller.signal.aborted
+      ) {
+        logger.info("Dropped stale follow-up error", {
+          version: task.version
+        });
+        return;
+      }
+
       if (isAbortLikeError(error)) {
         logger.info("Follow-up request aborted", {
           version: task.version
         });
-        if (isTaskCurrent("follow-up", task.version)) {
+        if (sourceEditorSession.isTaskCurrent("follow-up", task.version)) {
           sessionState.chatHistory = previousChatHistory;
           panel.setState({
             chatHistory: previousChatHistory,
@@ -1206,13 +1367,13 @@ export function activate(context: vscode.ExtensionContext): void {
             reasoningEffort: getSettings().providerReasoningEffort,
             statusMessage: "Follow-up request canceled."
           });
-          activeFollowUpTask = undefined;
+          sourceEditorSession.finishTask("follow-up", task.version);
         }
         return;
       }
 
       logger.error("Follow-up request failed", error);
-      if (isTaskCurrent("follow-up", task.version)) {
+      if (sourceEditorSession.isTaskCurrent("follow-up", task.version)) {
         sessionState.chatHistory = previousChatHistory;
         panel.setState({
           chatHistory: previousChatHistory,
@@ -1222,7 +1383,7 @@ export function activate(context: vscode.ExtensionContext): void {
             error instanceof Error ? error.message : String(error)
           }`
         });
-        activeFollowUpTask = undefined;
+        sourceEditorSession.finishTask("follow-up", task.version);
       }
       await vscode.window.showWarningMessage(
         `Read Code In Chinese: follow-up failed. ${
@@ -1232,7 +1393,10 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    if (!isTaskCurrent("follow-up", task.version) || task.controller.signal.aborted) {
+    if (
+      !sourceEditorSession.isTaskCurrent("follow-up", task.version) ||
+      task.controller.signal.aborted
+    ) {
       logger.info("Dropped stale follow-up result", {
         version: task.version
       });
@@ -1256,9 +1420,7 @@ export function activate(context: vscode.ExtensionContext): void {
       statusMessage: `Source: ${followUpResponse.source} | Latency: ${followUpResponse.latencyMs} ms`
     });
 
-    if (isTaskCurrent("follow-up", task.version)) {
-      activeFollowUpTask = undefined;
-    }
+    sourceEditorSession.finishTask("follow-up", task.version);
   }
 
   async function handleSelectionFailure(
@@ -1357,8 +1519,13 @@ export function activate(context: vscode.ExtensionContext): void {
     const preprocessStore = new PreprocessStore(projectContext.workspaceStore);
     const sourceHash = createContentHash(editor.document.getText());
     const cacheFile = await preprocessStore.read(projectContext.relativeFilePath);
+    const expectedFingerprint = createPreprocessBuildFingerprint(getSettings());
 
-    if (cacheFile && cacheFile.sourceHash === sourceHash) {
+    if (
+      cacheFile &&
+      cacheFile.sourceHash === sourceHash &&
+      isPreprocessCacheCompatible(cacheFile, expectedFingerprint)
+    ) {
       const sanitizedEntries = sanitizeWordbookEntries(cacheFile.entries);
 
       if (sanitizedEntries.length !== cacheFile.entries.length) {
@@ -1383,19 +1550,35 @@ export function activate(context: vscode.ExtensionContext): void {
     const sourceEditor = getPreferredSourceEditor(editor);
     const projectContext = sourceEditor ? getProjectContext(sourceEditor.document, logger) : undefined;
     const currentGranularity = inferCurrentGranularity(sourceEditor);
+    const currentSelectionText = sourceEditor?.selection.isEmpty
+      ? undefined
+      : sourceEditor?.document.getText(sourceEditor.selection).trim();
+    const currentRequest = sessionState.request;
+    const currentSelectionInsight =
+      currentSelectionText &&
+      currentRequest &&
+      currentRequest.relativeFilePath === projectContext?.relativeFilePath &&
+      currentRequest.selectedText.trim() === currentSelectionText
+        ? currentRequest.selectionInsight
+        : undefined;
 
     panel.setState({
       isWatchingSelection: panel.isWatchingSelection(),
       currentFile: projectContext?.relativeFilePath ?? sourceEditor?.document.fileName,
       currentSelectionLabel: sourceEditor ? formatSelectionLabel(sourceEditor.selection) : undefined,
+      hasSelection: hasNonEmptySelection(sourceEditor),
       currentGranularity,
+      currentSelectionInsight,
       wordbookEntries: getVisibleWordbookEntries(sourceEditor),
       reasoningEffort: getSettings().providerReasoningEffort,
       preprocessProgress: getVisiblePreprocessProgress(sessionState.preprocessProgress, sourceEditor)
     });
   }
 
-  async function runPreprocessForActiveEditor(showNotifications: boolean): Promise<void> {
+  async function runPreprocessForActiveEditor(
+    showNotifications: boolean,
+    trigger: PreprocessTrigger = "manual"
+  ): Promise<void> {
     const editor = getPreferredSourceEditor();
 
     if (!editor) {
@@ -1408,19 +1591,58 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    if (getSettings().providerId !== "openai-compatible") {
+    const settings = getSettings();
+
+    if (settings.providerId !== "openai-compatible") {
+      if (showNotifications) {
+        await vscode.window.showInformationMessage(
+          "Read Code In Chinese: 文件预处理需要启用 OpenAI 兼容远端服务。"
+        );
+      }
       return;
     }
 
-    const provider = createProvider(getSettings(), logger);
+    const sourceText = editor.document.getText();
+    const policyDecision = evaluatePreprocessPolicy({
+      trigger,
+      mode: settings.preprocessMode,
+      workspaceTrusted: vscode.workspace.isTrusted,
+      requireTrustedWorkspace: settings.providerRequireTrustedWorkspace,
+      relativeFilePath: projectContext.relativeFilePath,
+      fileBytes: Buffer.byteLength(sourceText, "utf8"),
+      maxFileBytes: settings.preprocessMaxFileBytes,
+      excludePatterns: settings.preprocessExclude
+    });
+
+    if (!policyDecision.allowed) {
+      logger.info("Preprocess skipped by policy", {
+        trigger,
+        relativeFilePath: projectContext.relativeFilePath,
+        reason: policyDecision.reason
+      });
+
+      if (showNotifications) {
+        panel.setState({ statusMessage: policyDecision.reason });
+        await vscode.window.showWarningMessage(
+          `Read Code In Chinese: ${policyDecision.reason ?? "preprocessing is not allowed."}`
+        );
+      }
+      return;
+    }
+
+    const provider = createProvider(settings, logger);
 
     if (!provider.preprocessSymbols) {
       return;
     }
 
-    const task = startTask("preprocess");
-    const sourceText = editor.document.getText();
+    const task = sourceEditorSession.startTask("preprocess");
     const sourceHash = createContentHash(sourceText);
+    const documentVersion = editor.document.version;
+    const isCurrentTask = (): boolean =>
+      sourceEditorSession.isTaskCurrent("preprocess", task.version) &&
+      !task.controller.signal.aborted &&
+      editor.document.version === documentVersion;
 
     if (
       sessionState.wordbookRelativeFilePath !== projectContext.relativeFilePath ||
@@ -1442,7 +1664,24 @@ export function activate(context: vscode.ExtensionContext): void {
         false,
         logger
       );
-      const candidatePool = buildPreprocessCandidatePool(glossaryEntries);
+
+      if (!isCurrentTask()) {
+        return;
+      }
+
+      const rawCandidatePool = buildPreprocessCandidatePool(glossaryEntries);
+      const candidatePool = rawCandidatePool.slice(
+        0,
+        Math.max(1, Math.round(settings.preprocessMaxCandidates))
+      );
+
+      if (candidatePool.length < rawCandidatePool.length) {
+        logger.info("Preprocess candidate pool capped", {
+          relativeFilePath: projectContext.relativeFilePath,
+          originalCount: rawCandidatePool.length,
+          cappedCount: candidatePool.length
+        });
+      }
 
       sessionState.preprocessProgress = {
         status: "running",
@@ -1467,7 +1706,7 @@ export function activate(context: vscode.ExtensionContext): void {
         languageId: editor.document.languageId,
         filePath: editor.document.uri.fsPath,
         relativeFilePath: projectContext.relativeFilePath,
-        settings: getSettings(),
+        settings,
         glossaryEntries,
         candidatePool,
         workspaceStore: projectContext.workspaceStore,
@@ -1475,9 +1714,14 @@ export function activate(context: vscode.ExtensionContext): void {
         logger,
         signal: task.controller.signal,
         getPriorityScore: (sourceLine) =>
-          getSelectionPriorityScore(projectContext.relativeFilePath, sourceLine),
+          sourceEditorSession.getSelectionPriorityScore(
+            projectContext.relativeFilePath,
+            sourceLine
+          ),
         onCacheUpdate: (cacheFile) => {
-          if (!isTaskCurrent("preprocess", task.version) || task.controller.signal.aborted) {
+          if (
+            !isCurrentTask()
+          ) {
             return;
           }
 
@@ -1491,7 +1735,9 @@ export function activate(context: vscode.ExtensionContext): void {
           });
         },
         onProgress: (progress) => {
-          if (!isTaskCurrent("preprocess", task.version) || task.controller.signal.aborted) {
+          if (
+            !isCurrentTask()
+          ) {
             return;
           }
 
@@ -1502,7 +1748,9 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       });
 
-      if (!isTaskCurrent("preprocess", task.version) || task.controller.signal.aborted) {
+      if (
+        !isCurrentTask()
+      ) {
         logger.info("Dropped stale preprocess result", {
           version: task.version,
           relativeFilePath: projectContext.relativeFilePath
@@ -1527,6 +1775,16 @@ export function activate(context: vscode.ExtensionContext): void {
         );
       }
     } catch (error) {
+      if (
+        !isCurrentTask()
+      ) {
+        logger.info("Dropped stale preprocess error", {
+          version: task.version,
+          relativeFilePath: projectContext.relativeFilePath
+        });
+        return;
+      }
+
       if (isAbortLikeError(error)) {
         logger.info("Preprocess request aborted", {
           version: task.version,
@@ -1561,16 +1819,14 @@ export function activate(context: vscode.ExtensionContext): void {
         );
       }
     } finally {
-      if (isTaskCurrent("preprocess", task.version)) {
-        activePreprocessTask = undefined;
-      }
+      sourceEditorSession.finishTask("preprocess", task.version);
     }
   }
 
   function getPreferredSourceEditor(
     editor?: vscode.TextEditor
   ): vscode.TextEditor | undefined {
-    return editor ?? vscode.window.activeTextEditor ?? trackedSourceEditor;
+    return sourceEditorSession.getPreferredEditor(editor, vscode.window.activeTextEditor);
   }
 
   function recordSelectionFocus(
@@ -1588,36 +1844,63 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     const midpointLine = Math.floor((selection.start.line + selection.end.line) / 2) + 1;
-    const recentLines = recentSelectionLinesByFile.get(relativeFilePath) ?? [];
-    recentLines.push(midpointLine);
-
-    if (recentLines.length > 12) {
-      recentLines.splice(0, recentLines.length - 12);
-    }
-
-    recentSelectionLinesByFile.set(relativeFilePath, recentLines);
-  }
-
-  function getSelectionPriorityScore(
-    relativeFilePath: string,
-    sourceLine: number
-  ): number {
-    const recentLines = recentSelectionLinesByFile.get(relativeFilePath) ?? [];
-
-    return recentLines.reduce((score, line, index) => {
-      const recencyWeight = index + 1;
-      const distance = Math.abs(line - sourceLine);
-
-      if (distance > 24) {
-        return score;
-      }
-
-      return score + Math.max(0, 25 - distance) * recencyWeight;
-    }, 0);
+    sourceEditorSession.recordSelectionLine(relativeFilePath, midpointLine);
   }
 }
 
 export function deactivate(): void {}
+
+function createTokenKnowledgeIdentity(
+  request: ExplanationRequest
+): TokenKnowledgeIdentity {
+  const insight = request.selectionInsight;
+  const origin = insight?.origin ?? "unknown";
+  const needsCallsiteIsolation = origin === "local" || origin === "unknown";
+
+  return {
+    term: insight?.term ?? request.selectedText,
+    ...(insight?.qualifiedName ? { qualifiedName: insight.qualifiedName } : {}),
+    origin,
+    ...(needsCallsiteIsolation
+      ? {
+          contextHash: createContentHash(
+            [
+              request.relativeFilePath,
+              request.selectionPreview,
+              request.contextBefore,
+              request.contextAfter
+            ].join("\n")
+          )
+        }
+      : {})
+  };
+}
+
+function createWorkspaceAwareProvider(
+  settings: ReturnType<typeof getSettings>,
+  logger: ExtensionLogger
+): ExplanationProvider {
+  if (
+    settings.providerId === "openai-compatible" &&
+    settings.providerRequireTrustedWorkspace &&
+    !vscode.workspace.isTrusted
+  ) {
+    logger.warn("Remote provider disabled for untrusted workspace", {
+      providerId: settings.providerId
+    });
+    return createProvider(
+      {
+        ...settings,
+        providerId: "local",
+        providerBaseUrl: "",
+        providerModel: ""
+      },
+      logger
+    );
+  }
+
+  return createProvider(settings, logger);
+}
 
 async function runExplanationWithFallback(
   provider: ExplanationProvider,
@@ -1626,7 +1909,10 @@ async function runExplanationWithFallback(
   signal?: AbortSignal
 ): Promise<ExplanationResponse> {
   try {
-    return await provider.explain(request, { signal });
+    return attachSelectionDocumentation(
+      await provider.explain(request, { signal }),
+      request
+    );
   } catch (error) {
     if (isAbortLikeError(error)) {
       throw error;
@@ -1644,12 +1930,15 @@ async function runExplanationWithFallback(
     );
     const response = await fallbackProvider.explain(request, { signal });
 
-    return {
-      ...response,
-      note: `Fell back to the local engine because the configured provider failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    };
+    return attachSelectionDocumentation(
+      {
+        ...response,
+        note: `Fell back to the local engine because the configured provider failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      },
+      request
+    );
   }
 }
 
@@ -1771,7 +2060,8 @@ async function createExplanationRequest(
   reason: ExplanationRequest["reason"],
   glossaryEntries: GlossaryEntry[],
   knowledgeStore: KnowledgeStore,
-  relativeFilePath: string
+  relativeFilePath: string,
+  selectionOverride?: vscode.Selection
 ): Promise<ExplanationRequest> {
   const settings = getSettings();
   const selection =
@@ -1782,7 +2072,7 @@ async function createExplanationRequest(
           editor.document.lineCount - 1,
           editor.document.lineAt(editor.document.lineCount - 1).text.length
         )
-      : editor.selection;
+      : selectionOverride ?? editor.selection;
   const contextPadding =
     settings.detailLevel === "deep"
       ? 8
@@ -1812,8 +2102,28 @@ async function createExplanationRequest(
       )
     )
     .trim();
+  const selectionInsight =
+    reason === "fileOverview" || reason === "workspaceIndex"
+      ? undefined
+      : await inspectEditorSelection(
+          editor,
+          selection,
+          selectedText,
+          selectionPreview,
+          granularity,
+          glossaryEntries
+        );
   const knowledgeSnippets = await knowledgeStore.search(
-    `${editor.document.languageId}\n${selectedText}\n${contextBefore}\n${contextAfter}`,
+    [
+      editor.document.languageId,
+      selectedText,
+      selectionInsight?.qualifiedName,
+      selectionInsight?.signature,
+      contextBefore,
+      contextAfter
+    ]
+      .filter(Boolean)
+      .join("\n"),
     settings.knowledgeTopK
   );
 
@@ -1824,6 +2134,8 @@ async function createExplanationRequest(
         reason,
         granularity,
         selectedText,
+        selectionInsight?.kind,
+        selectionInsight?.qualifiedName,
         settings.detailLevel,
         settings.professionalLevel
       ].join(":")
@@ -1855,6 +2167,7 @@ async function createExplanationRequest(
       }),
     contextBefore,
     contextAfter,
+    selectionInsight,
     glossaryEntries,
     knowledgeSnippets
   };
@@ -2033,12 +2346,17 @@ function summarizeSettings(settings: ReturnType<typeof getSettings>) {
       model: endpoint.model || settings.providerModel || "(empty)"
     })),
     providerReasoningEffort: settings.providerReasoningEffort,
+    providerRequireTrustedWorkspace: settings.providerRequireTrustedWorkspace,
     detailLevel: settings.detailLevel,
     professionalLevel: settings.professionalLevel,
     occupation: settings.occupation,
     sections: settings.sections,
     autoExplainEnabled: settings.autoExplainEnabled,
-    autoOpenPanel: settings.autoOpenPanel
+    autoOpenPanel: settings.autoOpenPanel,
+    preprocessMode: settings.preprocessMode,
+    preprocessMaxFileBytes: settings.preprocessMaxFileBytes,
+    preprocessMaxCandidates: settings.preprocessMaxCandidates,
+    preprocessExcludeCount: settings.preprocessExclude.length
   };
 }
 
@@ -2092,6 +2410,7 @@ async function saveSettingsFromPanel(payload: {
   providerApiKeyEnvVar: string;
   providerFallbacks: ReturnType<typeof getSettings>["providerFallbacks"];
   providerTimeoutMs: number;
+  providerRequireTrustedWorkspace: boolean;
   customInstructions: string;
   userGoal: string;
   detailLevel: ReturnType<typeof getSettings>["detailLevel"];
@@ -2103,6 +2422,10 @@ async function saveSettingsFromPanel(payload: {
   maxTokens: number;
   reasoningEffort: ReturnType<typeof getSettings>["providerReasoningEffort"];
   autoExplainEnabled: boolean;
+  preprocessMode: ReturnType<typeof getSettings>["preprocessMode"];
+  preprocessExclude: string[];
+  preprocessMaxFileBytes: number;
+  preprocessMaxCandidates: number;
 }): Promise<void> {
   const currentSettings = getSettings();
   const sanitizedProviderTimeoutMs = sanitizeNumber(
@@ -2123,6 +2446,22 @@ async function saveSettingsFromPanel(payload: {
       minimum: 64
     })
   );
+  const sanitizedPreprocessMaxFileBytes = Math.round(
+    sanitizeNumber(payload.preprocessMaxFileBytes, currentSettings.preprocessMaxFileBytes, {
+      minimum: 1024
+    })
+  );
+  const sanitizedPreprocessMaxCandidates = Math.round(
+    sanitizeNumber(payload.preprocessMaxCandidates, currentSettings.preprocessMaxCandidates, {
+      minimum: 1,
+      maximum: 1000
+    })
+  );
+  const sanitizedPreprocessMode = ["off", "manual", "onSave", "idle"].includes(
+    payload.preprocessMode
+  )
+    ? payload.preprocessMode
+    : currentSettings.preprocessMode;
   const updates: Array<[string, unknown]> = [
     ["provider.id", payload.providerId],
     ["provider.baseUrl", payload.providerBaseUrl.trim()],
@@ -2140,7 +2479,12 @@ async function saveSettingsFromPanel(payload: {
     ["provider.topP", sanitizedTopP],
     ["provider.maxTokens", sanitizedMaxTokens],
     ["provider.reasoningEffort", payload.reasoningEffort],
-    ["autoExplain.enabled", payload.autoExplainEnabled]
+    ["provider.requireTrustedWorkspace", payload.providerRequireTrustedWorkspace],
+    ["autoExplain.enabled", payload.autoExplainEnabled],
+    ["preprocess.mode", sanitizedPreprocessMode],
+    ["preprocess.exclude", sanitizeStringList(payload.preprocessExclude)],
+    ["preprocess.maxFileBytes", sanitizedPreprocessMaxFileBytes],
+    ["preprocess.maxCandidates", sanitizedPreprocessMaxCandidates]
   ];
 
   for (const [key, value] of updates) {
@@ -2150,7 +2494,7 @@ async function saveSettingsFromPanel(payload: {
   const savedSettings = getSettings();
 
   await vscode.window.showInformationMessage(
-    `Read Code In Chinese: settings saved. Provider=${savedSettings.providerId}, occupation=${savedSettings.occupation}.`
+    `Read Code In Chinese: 设置已保存。服务=${savedSettings.providerId}，预处理=${savedSettings.preprocessMode}。`
   );
 }
 
@@ -2196,6 +2540,10 @@ function sanitizeProviderFallbacks(
   }
 
   return normalizedFallbacks;
+}
+
+function sanitizeStringList(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 function isAbortLikeError(error: unknown): boolean {

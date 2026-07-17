@@ -21,6 +21,7 @@ import {
   createSuggestedQuestions
 } from "../analysis/summary";
 import { ExplanationProvider } from "./providerTypes";
+import { humanizeIdentifier, shortenText } from "../utils/text";
 
 export class LocalExplanationProvider implements ExplanationProvider {
   readonly id = "local";
@@ -29,9 +30,11 @@ export class LocalExplanationProvider implements ExplanationProvider {
 
   async explain(request: ExplanationRequest): Promise<ExplanationResponse> {
     const startedAt = Date.now();
-    const summary = buildLocalSummary(request);
-    const sections = request.sections.map((sectionName) => {
-      const content = buildSectionContent(request, sectionName);
+    const summary = buildSelectionAwareLocalSummary(request) ?? buildLocalSummary(request);
+    const sections: ExplanationResponse["sections"] = request.sections.map((sectionName) => {
+      const content =
+        buildSelectionAwareSection(request, sectionName) ??
+        buildSectionContent(request, sectionName);
 
       return {
         label: sectionName,
@@ -39,6 +42,15 @@ export class LocalExplanationProvider implements ExplanationProvider {
         items: toBulletItems(content)
       };
     });
+    const documentationItems = buildDocumentationItems(request);
+
+    if (documentationItems.length > 0) {
+      sections.unshift({
+        label: "文档依据",
+        content: documentationItems.join("；"),
+        items: documentationItems
+      });
+    }
 
     this.logger?.info("Local provider generated explanation", {
       requestId: request.requestId,
@@ -132,9 +144,7 @@ export class LocalExplanationProvider implements ExplanationProvider {
         normalizedTerm: candidate.normalizedTerm,
         category: candidate.category,
         sourceLine: candidate.sourceLine,
-        summary: `\`${candidate.term}\` 是当前文件中的${localCategoryLabel(
-          candidate.category
-        )}，具体职责要结合附近赋值和调用位置判断。`,
+        summary: buildLocalPreprocessSummary(candidate),
         generatedAt: new Date().toISOString(),
         isPlaceholder: false
       })),
@@ -175,22 +185,21 @@ function toBulletItems(content: string): string[] {
   ).slice(0, 4);
 }
 
-function localCategoryLabel(category: SymbolPreprocessRequest["candidates"][number]["category"]): string {
-  switch (category) {
-    case "function":
-      return "函数";
-    case "class":
-      return "类";
-    case "type":
-      return "类型";
-    case "label":
-      return "标签名";
-    default:
-      return "变量";
-  }
-}
-
 function buildTitle(request: ExplanationRequest): string {
+  const insight = request.selectionInsight;
+
+  if (insight?.kind === "function") {
+    return `函数：${insight.term}`;
+  }
+
+  if (insight?.kind === "variable" || insight?.kind === "constant") {
+    return `变量：${insight.term}`;
+  }
+
+  if (insight?.origin === "library") {
+    return `库符号：${insight.qualifiedName ?? insight.term}`;
+  }
+
   switch (request.granularity) {
     case "token":
       return "Variable / Symbol Explanation";
@@ -204,5 +213,112 @@ function buildTitle(request: ExplanationRequest): string {
       return "Workspace Overview";
     default:
       return "Statement Explanation";
+  }
+}
+
+function buildSelectionAwareLocalSummary(request: ExplanationRequest): string | undefined {
+  const insight = request.selectionInsight;
+
+  if (!insight) {
+    return undefined;
+  }
+
+  const sourceLabel =
+    insight.origin === "library"
+      ? `来自库 \`${insight.qualifiedName ?? insight.term}\``
+      : insight.origin === "builtin"
+        ? "属于语言内置符号"
+        : "定义或使用于当前项目";
+
+  if (request.granularity === "function" || insight.kind === "function") {
+    const signature = insight.signature ? `签名为 \`${insight.signature}\`` : "签名需要结合定义确认";
+    return `\`${insight.term}\` 是可调用函数，${sourceLabel}；${signature}。重点关注输入、返回值和副作用。`;
+  }
+
+  if (insight.kind === "variable" || insight.kind === "constant") {
+    return `\`${insight.term}\` 是承载数据的${insight.kind === "constant" ? "常量" : "变量"}，${sourceLabel}。阅读时应先追踪它的赋值来源、当前含义和后续使用位置。`;
+  }
+
+  if (insight.kind === "class" || insight.kind === "type") {
+    return `\`${insight.term}\` 是${insight.kind === "class" ? "类" : "类型"}，${sourceLabel}；当前解释重点是它约束或建模的数据结构。`;
+  }
+
+  return undefined;
+}
+
+function buildSelectionAwareSection(
+  request: ExplanationRequest,
+  sectionName: string
+): string | undefined {
+  const insight = request.selectionInsight;
+
+  if (!insight) {
+    return undefined;
+  }
+
+  if (request.granularity === "function" || insight.kind === "function") {
+    if (sectionName === "inputOutput") {
+      return insight.signature
+        ? `调用签名：${insight.signature}。返回值和异常行为以当前实现及文档依据为准。`
+        : "先确认参数如何进入函数、返回值被谁使用，以及是否修改外部状态。";
+    }
+
+    if (sectionName === "usage") {
+      return "把它看作一段可复用流程：当前调用点提供输入，函数内部完成转换或副作用，再把结果交给下游。";
+    }
+
+    if (sectionName === "risk") {
+      return "优先检查异常、可变参数、外部 I/O、共享状态修改和返回值未处理等风险。";
+    }
+  }
+
+  if (insight.kind === "variable" || insight.kind === "constant") {
+    if (sectionName === "inputOutput") {
+      return "这里的“输入”是变量的赋值来源，“输出”是它参与的计算、条件判断或函数调用。";
+    }
+
+    if (sectionName === "usage") {
+      return "沿着赋值点和引用点阅读，确认该值在当前作用域中的语义是否发生变化。";
+    }
+
+    if (sectionName === "risk") {
+      return "重点检查未初始化、空值、类型或张量形状变化、单位混淆，以及被意外修改。";
+    }
+  }
+
+  return undefined;
+}
+
+function buildDocumentationItems(request: ExplanationRequest): string[] {
+  const insight = request.selectionInsight;
+
+  if (!insight || (insight.origin !== "library" && insight.origin !== "builtin")) {
+    return [];
+  }
+
+  return [
+    insight.signature ? `签名：${insight.signature}` : undefined,
+    insight.documentationSource === "language-service" && insight.documentation
+      ? `文档：${shortenText(insight.documentation, 280)}`
+      : undefined
+  ].filter((item): item is string => Boolean(item));
+}
+
+function buildLocalPreprocessSummary(
+  candidate: SymbolPreprocessRequest["candidates"][number]
+): string {
+  const concept = humanizeIdentifier(candidate.term) || candidate.term;
+
+  switch (candidate.category) {
+    case "function":
+      return `\`${candidate.term}\` 是当前文件中的函数，负责 ${concept} 相关流程；重点查看其参数、返回值和第 ${candidate.sourceLine} 行附近的副作用。`;
+    case "class":
+      return `\`${candidate.term}\` 是类，用于组织 ${concept} 相关状态和行为。`;
+    case "type":
+      return `\`${candidate.term}\` 是类型，用于约束 ${concept} 相关数据结构。`;
+    case "label":
+      return `\`${candidate.term}\` 是当前文件使用的标签或类别值。`;
+    default:
+      return `\`${candidate.term}\` 是当前文件中的变量，表示 ${concept} 相关数据；应结合第 ${candidate.sourceLine} 行的赋值来源和引用位置理解。`;
   }
 }

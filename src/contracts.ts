@@ -2,6 +2,7 @@ export type DetailLevel = "fast" | "balanced" | "deep";
 export type ProfessionalLevel = "beginner" | "intermediate" | "expert";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type ProviderId = "local" | "openai-compatible";
+export type PreprocessMode = "off" | "manual" | "onSave" | "idle";
 export type Occupation =
   | "student"
   | "developer"
@@ -37,6 +38,16 @@ export type GlossaryCategory =
   | "import"
   | "constant"
   | "unknown";
+export type SelectionSymbolKind =
+  | "variable"
+  | "function"
+  | "class"
+  | "type"
+  | "module"
+  | "constant"
+  | "label"
+  | "unknown";
+export type SelectionSymbolOrigin = "local" | "library" | "builtin" | "unknown";
 export type PreprocessedSymbolCategory =
   | "variable"
   | "function"
@@ -70,6 +81,7 @@ export interface ExtensionSettings {
   providerTopP: number;
   providerMaxTokens: number;
   providerReasoningEffort: ReasoningEffort;
+  providerRequireTrustedWorkspace: boolean;
   detailLevel: DetailLevel;
   professionalLevel: ProfessionalLevel;
   occupation: Occupation;
@@ -77,6 +89,10 @@ export interface ExtensionSettings {
   userGoal: string;
   knowledgeTopK: number;
   customInstructions: string;
+  preprocessMode: PreprocessMode;
+  preprocessExclude: string[];
+  preprocessMaxFileBytes: number;
+  preprocessMaxCandidates: number;
 }
 
 export interface GlossaryEntry {
@@ -121,6 +137,16 @@ export interface KnowledgeSnippet {
   score: number;
 }
 
+export interface SelectionInsight {
+  term: string;
+  kind: SelectionSymbolKind;
+  origin: SelectionSymbolOrigin;
+  qualifiedName?: string;
+  signature?: string;
+  documentation?: string;
+  documentationSource?: "language-service" | "glossary";
+}
+
 export interface ExplanationRequest {
   requestId: string;
   reason: ExplanationReason;
@@ -138,6 +164,7 @@ export interface ExplanationRequest {
   customInstructions: string;
   contextBefore: string;
   contextAfter: string;
+  selectionInsight?: SelectionInsight;
   glossaryEntries: GlossaryEntry[];
   knowledgeSnippets: KnowledgeSnippet[];
 }
@@ -199,6 +226,10 @@ export interface TokenKnowledgeEntry {
   languageId: string;
   term: string;
   normalizedTerm: string;
+  cacheKey?: string;
+  qualifiedName?: string;
+  origin?: SelectionSymbolOrigin;
+  contextHash?: string;
   generatedAt: string;
   updatedAt: string;
   explanation: ExplanationResponse;
@@ -225,11 +256,14 @@ export interface PreprocessedSymbolEntry {
   sourceLine: number;
   summary: string;
   generatedAt: string;
+  contextHash?: string;
   isPlaceholder?: boolean;
   scopePath?: string[];
 }
 
 export interface PreprocessedSymbolCacheFile {
+  builderVersion?: number;
+  buildFingerprint?: string;
   languageId: string;
   relativeFilePath: string;
   sourceHash: string;

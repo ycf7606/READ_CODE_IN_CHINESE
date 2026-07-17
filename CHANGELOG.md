@@ -1,7 +1,26 @@
 # Changelog
 
-## Unreleased - 2026-04-14
+## Unreleased - 2026-07-17
 
+- Isolated token knowledge cache entries by qualified API, symbol origin, and local callsite context to prevent same-name symbol collisions
+- Changed remote file preprocessing to privacy-first explicit modes (`off`, `manual`, `onSave`, `idle`) with a `manual` default
+- Added workspace-trust enforcement, sensitive-path globs, UTF-8 file-size limits, and candidate-count caps before remote preprocessing
+- Canceled stale explanation, follow-up, and preprocess work when unsaved document content changes
+- Added preprocess builder versions and provider/audience fingerprints so incompatible caches are not reused after configuration or algorithm changes
+- Preserved long Python and brace-delimited definition scopes and distributed context limits fairly across every batch candidate
+- Used VS Code definition locations to distinguish workspace-local Python imports from installed library symbols when possible
+- Added 41 unit tests, a real VS Code Extension Host smoke suite, CI host-test execution, and local VS Code executable support
+- Added selection insight that distinguishes variables, functions, classes, constants, modules, local symbols, Python built-ins, and imported Python APIs
+- Reused VS Code hover signatures and documentation as concise evidence for library/built-in explanations without importing or executing Python packages
+- Split variable explanations toward value/data flow and function explanations toward responsibility, inputs/outputs, control flow, and side effects
+- Replaced repeated whole-file preprocess prompts with bounded definition/reference windows, per-symbol context hashes, and fast local selection for small candidate pools
+- Rebuilt the explanation panel as a compact Chinese interface with pause/resume following, manual regeneration, disabled invalid actions, persisted tabs, and text-only DOM rendering
+- Fixed stale hover/loading writes during rapid selection changes by snapshotting the selection and validating task versions after asynchronous stages
+- Expanded Python import resolution for dotted imports and multi-line `from ... import (...)` statements
+- Excluded compiled tests from production VSIX packages
+- Extracted source-editor tracking, async task versions, cancellation, selection deduplication, and reading-priority history into a dedicated runtime controller
+- Prevented stale follow-up and preprocessing failures from overwriting newer panel state or showing obsolete warnings
+- Added extension-disposal cleanup for pending timers and tasks, plus focused unit coverage for the new session lifecycle
 - Hid batch counters during candidate-pool preparation and selection so the panel no longer shows misleading `0 / N` batch progress before real preprocessing starts
 - Added class-member function extraction for `self.xxx(...)`, `cls.xxx(...)`, and `this.xxx(...)` references so more file-local methods enter the wordbook candidate pool
 - Added scope-path annotation for wordbook entries and reorganized the wordbook tab into a compact collapsible tree grouped by classes and functions
