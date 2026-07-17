@@ -1,5 +1,7 @@
 # Importing Knowledge
 
+[English](IMPORTING_KNOWLEDGE.md) · [简体中文](IMPORTING_KNOWLEDGE.zh-CN.md) · [Documentation](../README.md)
+
 The extension supports retrieval from local documents that you import into the current workspace.
 
 ## Supported Formats
